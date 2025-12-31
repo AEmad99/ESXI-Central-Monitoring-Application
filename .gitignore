@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+venv/
+.env
+monitoring.db
+users.json
+sessions.json
+scan_cache.json

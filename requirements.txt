@@ -1,0 +1,7 @@
+streamlit
+pyvmomi
+requests
+streamlit-authenticator
+PyYAML
+FLASK
+python-dotenv
