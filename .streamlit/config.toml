@@ -1,0 +1,22 @@
+[theme]
+# Explicitly set base to light to ensure overrides work
+base = "light"
+
+# The primary color for buttons and interactive elements (Terracotta/Clay)
+primaryColor = "#D97757"
+
+# The main background color (Warm, light cream/beige)
+backgroundColor = "#F5F2EB"
+
+# The sidebar and secondary background color (Slightly darker beige)
+secondaryBackgroundColor = "#EBE6DE"
+
+# Text color (Soft charcoal black, not pure black)
+textColor = "#2D2D2D"
+
+# Font family (Anthropic uses serif fonts heavily for a literary feel)
+font = "serif"
+
+[client]
+# Collapses the sidebar by default so it is not extended out on page load
+initialSidebarState = "collapsed"
