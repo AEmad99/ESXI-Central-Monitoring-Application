@@ -43,222 +43,6 @@ st.session_state.db_initialized = True
 st.markdown("""
 <style>
     /* -------------------------------------------------------------------------- */
-    /*                         IBM Carbon Design System Theme                     */
-    /*                       + Modern Motion & Smoothness                         */
-    /* -------------------------------------------------------------------------- */
-
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&display=swap');
-
-    :root {
-        --cds-interactive-01: #0f62fe; /* IBM Blue 60 */
-        --cds-interactive-01-hover: #0353e9; /* IBM Blue 70 */
-        --cds-text-01: #f4f4f4; /* White */
-        --cds-text-02: #c6c6c6; /* Gray 20 */
-        --cds-ui-background: #161616; /* Gray 100 */
-        --cds-ui-01: #262626; /* Gray 90 */
-        --cds-ui-03: #393939; /* Gray 80 */
-        --cds-danger-01: #da1e28; /* Red 60 */
-        --cds-success-01: #24a148; /* Green 50 */
-        --font-family-base: 'IBM Plex Sans', sans-serif;
-    }
-
-    html, body, [class*="css"] {
-        font-family: var(--font-family-base);
-        color: var(--cds-text-01);
-    }
-
-    /* Main Background */
-    .stApp {
-        background-color: var(--cds-ui-background);
-    }
-    
-    /* Animation: Fade In Page */
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(10px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-    
-    div.block-container {
-        animation: fadeIn 0.5s ease-out forwards;
-    }
-
-    /* Sidebar Styling with Glassmorphism feel */
-    section[data-testid="stSidebar"] {
-        background-color: rgba(38, 38, 38, 0.95); /* Gray 90 with opacity */
-        border-right: 1px solid var(--cds-ui-03);
-        backdrop-filter: blur(10px);
-    }
-    
-    section[data-testid="stSidebar"] h1 {
-        color: var(--cds-text-01);
-        font-weight: 600;
-        letter-spacing: 0.5px;
-    }
-
-    /* Headings */
-    h1, h2, h3, h4, h5, h6 {
-        font-family: var(--font-family-base);
-        color: var(--cds-text-01);
-        font-weight: 400;
-        letter-spacing: 0px;
-    }
-
-    h1 { font-weight: 600; }
-
-    /* -------------------------------------------------------------------------- */
-    /*                                  Buttons                                   */
-    /* -------------------------------------------------------------------------- */
-
-    /* Native Streamlit Buttons */
-    div.stButton > button {
-        background-color: var(--cds-interactive-01) !important;
-        color: #ffffff !important;
-        border: none !important;
-        border-radius: 0px !important; /* Sharp Edges */
-        padding: 0.875rem 1.5rem !important; /* Large Touch Target */
-        font-family: var(--font-family-base) !important;
-        font-weight: 400 !important;
-        font-size: 0.875rem !important;
-        letter-spacing: 0.16px !important;
-        transition: all 0.2s cubic-bezier(0.2, 0, 0.38, 0.9);
-        box-shadow: none !important;
-        min-height: 48px;
-        position: relative;
-        overflow: hidden;
-    }
-
-    div.stButton > button:hover {
-        background-color: var(--cds-interactive-01-hover) !important;
-        transform: translateY(-1px);
-        box-shadow: 0 4px 8px rgba(0,0,0,0.3) !important;
-    }
-
-    div.stButton > button:active {
-        background-color: #002d9c !important; /* Blue 80 */
-        transform: translateY(1px);
-    }
-
-    div.stButton > button p {
-        color: #ffffff !important;
-    }
-    
-    /* Custom Link Button (View Host) */
-    .link-button {
-        text-decoration: none !important;
-        background-color: var(--cds-ui-03) !important; 
-        color: var(--cds-text-01) !important;
-        padding: 0.8rem 1rem;
-        border-radius: 0px !important;
-        text-align: center;
-        border: 1px solid transparent;
-        cursor: pointer;
-        display: block;
-        width: 100%;
-        box-sizing: border-box;
-        font-size: 0.875rem;
-        transition: all 0.2s ease;
-    }
-
-    .link-button:hover {
-        background-color: #4c4c4c !important; 
-        border-color: var(--cds-text-01);
-        transform: translateY(-1px);
-        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-    }
-
-    /* -------------------------------------------------------------------------- */
-    /*                                Inputs                                      */
-    /* -------------------------------------------------------------------------- */
-
-    /* Text Input, Select Box, Password */
-    .stTextInput input, .stSelectbox div[data-baseweb="select"], .stNumberInput input {
-        background-color: var(--cds-ui-01) !important;
-        color: var(--cds-text-01) !important;
-        border: none !important;
-        border-bottom: 1px solid var(--cds-ui-03) !important;
-        border-radius: 0px !important;
-        transition: border-bottom-color 0.2s ease;
-    }
-
-    /* Focus State */
-    .stTextInput input:focus, .stSelectbox div[data-baseweb="select"]:focus-within {
-        border-bottom: 2px solid var(--cds-interactive-01) !important;
-        box-shadow: none !important;
-    }
-    
-    label[data-testid="stLabel"] {
-        color: var(--cds-text-02) !important;
-        font-size: 0.75rem !important;
-    }
-
-    /* -------------------------------------------------------------------------- */
-    /*                           Data Display & Cards                             */
-    /* -------------------------------------------------------------------------- */
-
-    /* Dataframes/Tables */
-    div[data-testid="stDataFrame"] {
-        border: 1px solid var(--cds-ui-03);
-    }
-    
-    div[data-testid="stDataFrame"] div[class*="css"] {
-        background-color: var(--cds-ui-01);
-        color: var(--cds-text-01);
-    }
-
-    /* Custom Cards / Containers - Adding smooth hover lift */
-    div.stContainer {
-        background-color: var(--cds-ui-01);
-        border: 1px solid var(--cds-ui-03);
-        padding: 1rem;
-        border-radius: 0px;
-        transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
-    }
-    
-    /* Make containers interactive on hover if they are used as cards */
-    div.stContainer:hover {
-        border-color: var(--cds-interactive-01);
-        box-shadow: 0 8px 16px rgba(0,0,0,0.4);
-        transform: translateY(-2px);
-    }
-    
-    /* Metrics/Progress Bars */
-    div[data-testid="stMetricValue"] {
-        color: var(--cds-text-01) !important;
-    }
-
-    .stProgress > div > div > div > div {
-        background-color: var(--cds-interactive-01) !important;
-        transition: width 0.6s ease-in-out;
-    }
-
-    /* -------------------------------------------------------------------------- */
-    /*                                 Utilities                                  */
-    /* -------------------------------------------------------------------------- */
-
-    hr {
-        border-color: var(--cds-ui-03) !important;
-    }
-
-    .streamlit-expanderHeader {
-        background-color: var(--cds-ui-01) !important;
-        color: var(--cds-text-01) !important;
-        border-radius: 0px !important;
-        transition: background-color 0.2s;
-    }
-    
-    .streamlit-expanderHeader:hover {
-        background-color: var(--cds-ui-03) !important;
-    }
-    
-    div[data-testid="stNotification"] {
-        background-color: var(--cds-ui-01);
-        border-left: 4px solid var(--cds-interactive-01);
-        border-radius: 0px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    }
-    
-    /* -------------------------------------------------------------------------- */
     /*                               IP Grid Animations                           */
     /* -------------------------------------------------------------------------- */
     
@@ -280,9 +64,9 @@ st.markdown("""
     .ip-box {
         padding: 12px 0;
         text-align: center;
-        border-radius: 0px; 
+        border-radius: 4px; 
         font-size: 0.75rem;
-        font-family: 'IBM Plex Mono', monospace; 
+        font-family: monospace; 
         font-weight: 600;
         color: #ffffff;
         transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
@@ -297,14 +81,14 @@ st.markdown("""
     }
     
     .ip-taken {
-        background-color: var(--cds-danger-01); 
+        background-color: #da1e28; /* Red */
         opacity: 0.9;
         /* Subtle pulse for taken IPs to indicate 'live' status */
         animation: pulse-red 3s infinite;
     }
     
     .ip-free {
-        background-color: var(--cds-success-01); 
+        background-color: #24a148; /* Green */
         opacity: 0.8;
     }
     
@@ -313,10 +97,42 @@ st.markdown("""
         box-shadow: 0 0 15px rgba(36, 161, 72, 0.6);
     }
 
+    /* -------------------------------------------------------------------------- */
+    /*                                  Buttons                                   */
+    /* -------------------------------------------------------------------------- */
+    
+    /* Custom Link Button (View Host) */
+    .link-button {
+        text-decoration: none !important;
+        background-color: #393939 !important; 
+        color: #f4f4f4 !important;
+        padding: 0.5rem 1rem;
+        border-radius: 4px !important;
+        text-align: center;
+        border: 1px solid #525252;
+        cursor: pointer;
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+        font-size: 0.875rem;
+        transition: all 0.2s ease;
+    }
+
+    .link-button:hover {
+        background-color: #4c4c4c !important; 
+        border-color: #f4f4f4;
+        transform: translateY(-1px);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+
 </style>
 """, unsafe_allow_html=True)
 
 # --- UI Helper Functions ---
+def get_server_os_info():
+    """Detects the underlying OS of the Streamlit server."""
+    return f"{platform.system()} {platform.release()}"
+
 def get_color_from_percentage(percentage):
     """Returns a color based on the resource usage percentage."""
     if percentage > 90:
@@ -812,6 +628,7 @@ def main():
         authenticator.logout('🚪 Logout', key='unique_key', location='sidebar')
         
         st.divider()
+        st.caption(f"Server OS: {get_server_os_info()}")
         st.write("System Status")
         if st.button("🔄 Refresh All Data"):
             with st.spinner("Connecting to hosts and collecting new data... This may take a moment."):

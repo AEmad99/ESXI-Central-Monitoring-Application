@@ -145,6 +145,7 @@ def collect_host_data(host_row):
         vm_view = content.viewManager.CreateContainerView(content.rootFolder, [vim.VirtualMachine], True)
         properties = [
             "name", "summary.config.name", "summary.guest.guestFullName", "summary.guest.guestId",
+            "config.guestFullName", "config.guestId",
             "summary.guest.ipAddress", "guest.net", "summary.config.memorySizeMB", "summary.quickStats.guestMemoryUsage",
             "summary.config.numCpu", "config.hardware.device", "config.createDate", "runtime.powerState"
         ]
@@ -160,8 +161,19 @@ def collect_host_data(host_row):
                 vm_props = {prop.name: prop.val for prop in obj_content.propSet}
                 
                 config_name = vm_props.get("summary.config.name", "Unknown")
-                guest_full_name = vm_props.get("summary.guest.guestFullName", "")
-                guest_id = vm_props.get("summary.guest.guestId", "")
+                
+                # Guest OS Resolution Priority:
+                # 1. summary.guest.guestFullName (Tools reported, most accurate)
+                # 2. config.guestFullName (Configured in VM Settings)
+                guest_full_name = vm_props.get("summary.guest.guestFullName")
+                if not guest_full_name:
+                    guest_full_name = vm_props.get("config.guestFullName")
+                
+                # 3. summary.guest.guestId (Tools reported ID)
+                # 4. config.guestId (Configured ID)
+                guest_id = vm_props.get("summary.guest.guestId")
+                if not guest_id:
+                    guest_id = vm_props.get("config.guestId")
                 
                 # Extract ALL IPs from guest.net
                 guest_net = vm_props.get("guest.net", [])
@@ -189,12 +201,10 @@ def collect_host_data(host_row):
 
                 # OS Name Logic
                 os_name = "Unknown"
-                if "coreos" in str(guest_full_name).lower(): os_name = "CoreOS"
-                elif guest_full_name and "other" not in str(guest_full_name).lower(): os_name = str(guest_full_name)
-                elif guest_id: os_name = format_guest_id(str(guest_id))
-                
-                coreos_keywords = ["master", "worker", "odf", "infra", "bootstrap"]
-                if any(k in config_name.lower() for k in coreos_keywords): os_name = "CoreOS"
+                if guest_full_name:
+                    os_name = str(guest_full_name)
+                elif guest_id: 
+                    os_name = format_guest_id(str(guest_id))
 
                 # RAM
                 total_ram = vm_props.get("summary.config.memorySizeMB", 0)
