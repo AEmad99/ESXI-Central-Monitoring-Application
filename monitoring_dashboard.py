@@ -27,106 +27,301 @@ requests.packages.urllib3.disable_warnings()
 st.set_page_config(layout="wide", page_title="ESXi Monitoring Dashboard", initial_sidebar_state="collapsed")
 
 # --- Database Initialization & Seeding ---
-# Host Groups (Hardcoded credentials moved here for seeding)
-HOST_GROUPS = {
-    "Group 1": {"ips": ["192.168.1.2", "192.168.1.7", "192.168.1.8", "192.168.1.9"], "pass": os.getenv("GROUP1_PASS")},
-    "Group 2": {"ips": ["192.168.1.3", "192.168.1.4", "192.168.1.5", "192.168.1.6", "192.168.1.13", "192.168.1.14", "192.168.1.15", "192.168.1.16", "192.168.0.170", "192.168.0.180", "192.168.0.190", "192.168.0.200"], "pass": os.getenv("GROUP2_PASS")}
-}
+# --- Database Initialization & Seeding ---
+# Host Groups (Loaded from .env JSON)
+try:
+    host_groups_json = os.getenv("HOST_GROUPS_JSON", "{}")
+    # Handle single quotes wrapping the JSON string if present from .env loading quirks
+    if host_groups_json.startswith("'") and host_groups_json.endswith("'"):
+        host_groups_json = host_groups_json[1:-1]
+        
+    raw_groups = json.loads(host_groups_json)
+    HOST_GROUPS = {}
+    for group_name, data in raw_groups.items():
+        # Resolve password from env var name
+        pass_env_var = data.get("pass_env")
+        password = os.getenv(pass_env_var) if pass_env_var else None
+        
+        HOST_GROUPS[group_name] = {
+            "ips": data.get("ips", []),
+            "pass": password,
+            "user": data.get("user", "root")
+        }
+except json.JSONDecodeError as e:
+    st.error(f"Failed to parse HOST_GROUPS_JSON from .env: {e}")
+    HOST_GROUPS = {}
+except Exception as e:
+    st.error(f"Error loading host configuration: {e}")
+    HOST_GROUPS = {}
 
 # Ensure DB is ready
 # We run this unconditionally to ensure schema updates (like adding new tables) apply on reload
 db_manager.init_db()
+# Sync DB with current config (updates passwords/users if changed)
+db_manager.update_hosts_from_config(HOST_GROUPS)
 db_manager.seed_hosts_if_empty(HOST_GROUPS)
 db_manager.seed_subnets_if_empty()
 st.session_state.db_initialized = True
 
-st.markdown("""
-<style>
-    /* -------------------------------------------------------------------------- */
-    /*                               IP Grid Animations                           */
-    /* -------------------------------------------------------------------------- */
-    
-    @keyframes pulse-red {
-        0% { box-shadow: 0 0 0 0 rgba(218, 30, 40, 0.4); }
-        70% { box-shadow: 0 0 0 6px rgba(218, 30, 40, 0); }
-        100% { box-shadow: 0 0 0 0 rgba(218, 30, 40, 0); }
-    }
 
-    .ip-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
-        gap: 8px;
-        margin-top: 20px;
-    }
-    .ip-link {
-        text-decoration: none;
-    }
-    .ip-box {
-        padding: 12px 0;
-        text-align: center;
-        border-radius: 4px; 
-        font-size: 0.75rem;
-        font-family: monospace; 
-        font-weight: 600;
-        color: #ffffff;
-        transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
-        border: 1px solid transparent;
-        position: relative;
-    }
-    .ip-box:hover {
-        transform: scale(1.1);
-        z-index: 10;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.6);
-        border-color: #ffffff;
-    }
-    
-    .ip-taken {
-        background-color: #da1e28; /* Red */
-        opacity: 0.9;
-        /* Subtle pulse for taken IPs to indicate 'live' status */
-        animation: pulse-red 3s infinite;
-    }
-    
-    .ip-free {
-        background-color: #24a148; /* Green */
-        opacity: 0.8;
-    }
-    
-    .ip-free:hover {
-        background-color: #2f9e44; /* Slightly brighter green on hover */
-        box-shadow: 0 0 15px rgba(36, 161, 72, 0.6);
-    }
 
-    /* -------------------------------------------------------------------------- */
-    /*                                  Buttons                                   */
-    /* -------------------------------------------------------------------------- */
+# --- Theme Management ---
+if 'theme' not in st.session_state:
+    st.session_state.theme = 'Light'
+
+def get_theme_css(mode):
+    # Common Styles
+    common_css = """
+    /* Design System Common */
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap');
     
-    /* Custom Link Button (View Host) */
+    html, body, [class*="css"] {
+        font-family: 'Outfit', sans-serif !important;
+    }
+    
+    /* Headers */
+    h1, h2, h3 {
+        font-weight: 500 !important;
+        letter-spacing: -0.02em !important;
+    }
+    
+    /* Buttons */
+    .stButton > button {
+        border-radius: 8px !important;
+        font-weight: 500 !important;
+        transition: all 0.2s cubic-bezier(0.2, 0, 0, 1) !important;
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-2px);
+    }
+    
+    /* Link Buttons */
     .link-button {
         text-decoration: none !important;
-        background-color: #393939 !important; 
-        color: #f4f4f4 !important;
-        padding: 0.5rem 1rem;
-        border-radius: 4px !important;
+        padding: 0.6rem 1.2rem;
+        border-radius: 8px !important;
         text-align: center;
-        border: 1px solid #525252;
         cursor: pointer;
         display: block;
         width: 100%;
         box-sizing: border-box;
-        font-size: 0.875rem;
+        font-size: 0.9rem;
+        font-weight: 500;
         transition: all 0.2s ease;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.1);
     }
-
     .link-button:hover {
-        background-color: #4c4c4c !important; 
-        border-color: #f4f4f4;
-        transform: translateY(-1px);
-        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+    }
+    
+    /* Progress Bars */
+    .stProgress > div > div > div > div {
+        background-color: #d97757 !important; /* Terracotta accent */
+        height: 6px !important;
+        border-radius: 3px !important;
+    }
+    
+    /* Grid & Animations */
+    /* Grid & Simple Classic Styling */
+    .ip-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+        gap: 8px;
+        margin-top: 24px;
+        padding: 20px;
+        border-radius: 4px;
+        border: 1px solid #ccc;
+    }
+    .ip-link { text-decoration: none; }
+    
+    .ip-box {
+        padding: 12px 0;
+        text-align: center;
+        border-radius: 2px; 
+        font-size: 0.9rem;
+        font-family: monospace, sans-serif !important; 
+        font-weight: 600;
+        color: #ffffff !important;
+        border: 1px solid rgba(0,0,0,0.2);
+        cursor: pointer;
+        transition: opacity 0.2s;
+    }
+    
+    .ip-box:hover {
+        opacity: 0.8;
+    }
+    
+    .ip-taken {
+        background-color: #c62828 !important; /* Solid Classic Red */
+        box-shadow: none !important;
+    }
+    .ip-free {
+        background-color: #2e7d32 !important; /* Solid Classic Green */
+        box-shadow: none !important;
+        opacity: 1 !important;
     }
 
-</style>
-""", unsafe_allow_html=True)
+    """
+
+    if mode == 'Light':
+        return common_css + """
+        /* Light Mode Main Background */
+        .stApp {
+            background-color: #fcfcf9 !important;
+            color: #191919 !important;
+        }
+        
+        /* Header Background - Light */
+        header[data-testid="stHeader"] {
+            background-color: #fcfcf9 !important;
+        }
+        /* Header Toolbar Icons - Light */
+        header[data-testid="stHeader"] .st-emotion-cache-152e8e9 {
+            color: #191919 !important;
+        }
+        
+        [data-testid="stSidebar"] {
+            background-color: #f4f3f0 !important;
+            border-right: 1px solid #e5e5e0;
+        }
+
+        h1, h2, h3, p, div, span { color: #191919 !important; }
+        
+        .stButton > button {
+            background-color: #ffffff !important;
+            color: #191919 !important;
+            border: 1px solid #e0e0e0 !important;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05) !important;
+        }
+        .stButton > button:hover {
+            background-color: #fafafa !important;
+            border-color: #d0d0d0 !important;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08) !important;
+        }
+        .ip-grid {
+            background: #ffffff;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.03);
+            border: 1px solid #f0f0f0;
+        }
+        .link-button {
+            background-color: #191919 !important; 
+            color: #ffffff !important;
+            border: 1px solid #191919;
+        }
+        .link-button:hover {
+            background-color: #333333 !important;
+        }
+        /* Exceptions for specific elements that need light text */
+        .ip-box { color: #ffffff !important; }
+        """
+    else: # Dark Mode
+        return common_css + """
+        /* Dark Mode Main Background */
+        .stApp {
+            background-color: #121212 !important;
+            color: #e0e0e0 !important;
+        }
+        
+        /* Header Background - Dark */
+        header[data-testid="stHeader"] {
+            background-color: #121212 !important;
+        }
+        
+        /* Toolbar Buttons - Dark */
+        header[data-testid="stHeader"] button {
+            background-color: transparent !important;
+            color: #e0e0e0 !important;
+        }
+        
+        /* Toolbar Icons - specifically target SVGs to avoid filling bounding boxes */
+        header[data-testid="stHeader"] svg {
+            fill: #e0e0e0 !important;
+            color: #e0e0e0 !important;
+        }
+        
+        /* Force DataFrame to fit Dark Theme via inversion */
+        [data-testid="stDataFrame"] {
+            filter: invert(1) hue-rotate(180deg);
+        }
+
+
+        /* Dark Mode Popover/Menu Background Fix */
+        div[data-baseweb="popover"] > div {
+            background-color: #1a1a1a !important;
+            color: #e0e0e0 !important;
+            border: 1px solid #333;
+        }
+        /* Fix text colors inside popover */
+        div[data-baseweb="popover"] li, 
+        div[data-baseweb="popover"] div, 
+        div[data-baseweb="popover"] span,
+        div[data-baseweb="popover"] p {
+            color: #e0e0e0 !important;
+        }
+        /* Hover state for menu items - messy to target exact classes, but try generic list item hover */
+        div[data-baseweb="popover"] li:hover {
+            background-color: #333 !important;
+        }
+
+        [data-testid="stSidebar"] {
+            background-color: #1a1a1a !important;
+            border-right: 1px solid #333;
+        }
+
+
+        /* Force text color for headers and standard text elements */
+        h1, h2, h3, p, span, div { color: #e0e0e0 !important; }
+        
+        /* Dark Mode Inputs/Text/Cards override */
+        div[data-baseweb="input"] > div, input {
+            background-color: #2d2d2d !important;
+            color: #e0e0e0 !important;
+            border-color: #444 !important;
+        }
+        div[data-baseweb="select"] > div {
+            background-color: #2d2d2d !important;
+            color: #e0e0e0 !important;
+            border-color: #444 !important;
+        }
+        
+        /* Fix label colors (like "Search by") */
+        label { color: #e0e0e0 !important; }
+        
+        .stButton > button {
+            background-color: #2d2d2d !important;
+            color: #e0e0e0 !important;
+            border: 1px solid #444 !important;
+        }
+        .stButton > button:hover {
+            background-color: #383838 !important;
+            border-color: #666 !important;
+        }
+        
+        .ip-grid {
+            background: #1e1e1e;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            border: 1px solid #333;
+        }
+        
+        .link-button {
+            background-color: #e0e0e0 !important; 
+            color: #121212 !important;
+            border: 1px solid #e0e0e0;
+        }
+        .link-button:hover {
+            background-color: #ffffff !important;
+        }
+        
+        /* Divider color */
+        hr { border-color: #444 !important; }
+        
+        /* Exceptions */
+        .ip-box { color: #ffffff !important; }
+        """
+
+st.markdown(f"<style>{get_theme_css(st.session_state.theme)}</style>", unsafe_allow_html=True)
 
 # --- UI Helper Functions ---
 def get_server_os_info():
@@ -573,14 +768,18 @@ def main():
         users_config['cookie']['expiry_days']
     )
 
-    st.markdown(
-        """
-        <div style="display: flex; justify-content: center; flex-direction: column; align-items: center;">
-            <h3>ESXi Monitoring Dashboard</h3>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    # Header with Icon and Title
+    header_col1, header_col2 = st.columns([1, 10])
+    with header_col1:
+        try:
+            st.image("image.png", width=60)
+        except Exception:
+            pass
+            
+    with header_col2:
+         st.markdown("<h2 style='margin-top: 10px;'>ESXi Monitoring Dashboard</h2>", unsafe_allow_html=True)
+
+
     
     authenticator.login(location='main')
 
@@ -606,36 +805,53 @@ def main():
     if 'page' not in st.session_state:
         st.session_state.page = 'dashboard'
     
+    
     with st.sidebar:
-        st.title("ESXi Monitoring")
-        if st.button("📊 Dashboard"):
+        st.title("Menu")
+        
+        # Theme Toggle
+        theme_val = st.toggle("Dark Mode", value=(st.session_state.theme == 'Dark'))
+        new_theme = "Dark" if theme_val else "Light"
+        if new_theme != st.session_state.theme:
+            st.session_state.theme = new_theme
+            st.rerun()
+            
+        st.divider()
+        
+        if st.button("📊 Dashboard", use_container_width=True):
+
             st.session_state.page = 'dashboard'
+            st.session_state.host = None # Reset host view
+            st.session_state.found_vms = None
             st.query_params.clear() 
             st.rerun()
             
-        if st.button("🌐 IP Management"):
+        if st.button("🌐 IP Map", use_container_width=True):
             st.session_state.page = 'ip_management'
             st.rerun()
 
-        if st.button("🕒 Recently Created"):
+        if st.button("🕒 Recently Created", use_container_width=True):
             st.session_state.page = 'recent_vms'
             st.rerun()
 
         if st.session_state.get('role') == 'admin':
-            if st.button("⚙️ User Management"):
+            if st.button("⚙️ User Mgmt", use_container_width=True):
                 st.session_state.page = 'user_management'
                 st.rerun()
-        authenticator.logout('🚪 Logout', key='unique_key', location='sidebar')
         
         st.divider()
-        st.caption(f"Server OS: {get_server_os_info()}")
-        st.write("System Status")
-        if st.button("🔄 Refresh All Data"):
-            with st.spinner("Connecting to hosts and collecting new data... This may take a moment."):
-                data_collector.update_all_hosts()
-            st.success("Data refreshed successfully!")
-            time.sleep(1)
-            st.rerun()
+        authenticator.logout('🚪 Logout', location='sidebar')
+        st.divider()
+        
+        if st.button("🔄 Refresh Data", use_container_width=True):
+             with st.spinner("Refreshing..."):
+                 data_collector.update_all_hosts()
+             st.success("Refreshed!")
+             time.sleep(0.5)
+             st.rerun()
+             
+
+
 
     if st.session_state.page == 'user_management':
         user_management(users_config, username)
@@ -697,7 +913,7 @@ def main():
             elif sort_desc:
                 all_hosts_with_metrics = sorted(all_hosts_with_metrics, key=lambda x: x['ip'], reverse=True)
 
-            num_columns = 4
+            num_columns = 3
             cols = st.columns(num_columns)
             
             for i, host_data in enumerate(all_hosts_with_metrics):

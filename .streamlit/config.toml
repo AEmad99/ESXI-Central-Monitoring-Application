@@ -17,6 +17,4 @@ textColor = "#2D2D2D"
 # Font family (Anthropic uses serif fonts heavily for a literary feel)
 font = "serif"
 
-[client]
-# Collapses the sidebar by default so it is not extended out on page load
-initialSidebarState = "collapsed"
+

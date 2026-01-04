@@ -146,3 +146,38 @@ def remove_subnet(prefix):
     conn.execute('DELETE FROM network_scans WHERE subnet = ?', (prefix,))
     conn.commit()
     conn.close()
+
+def update_hosts_from_config(host_groups, default_user="root"):
+    """
+    Updates the hosts table based on the configuration dictionary.
+    Updates passwords and usernames for existing hosts and inserts new ones.
+    """
+    conn = get_db_connection()
+    c = conn.cursor()
+    
+    print("Syncing host configuration to database...")
+    for group_name, group_data in host_groups.items():
+        password = group_data["pass"]
+        user = group_data.get("user", default_user)
+        for ip in group_data["ips"]:
+            # Check if host exists
+            c.execute('SELECT id FROM hosts WHERE ip = ?', (ip,))
+            row = c.fetchone()
+            
+            if row:
+                # Update existing host
+                c.execute('''
+                    UPDATE hosts 
+                    SET username = ?, password = ?, group_name = ?
+                    WHERE ip = ?
+                ''', (user, password, group_name, ip))
+            else:
+                # Insert new host
+                c.execute('''
+                    INSERT INTO hosts (ip, username, password, group_name)
+                    VALUES (?, ?, ?, ?)
+                ''', (ip, user, password, group_name))
+                
+    conn.commit()
+    conn.close()
+
