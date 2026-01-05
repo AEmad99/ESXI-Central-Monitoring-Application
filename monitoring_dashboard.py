@@ -213,6 +213,16 @@ def get_theme_css(mode):
         .link-button:hover {
             background-color: #333333 !important;
         }
+        /* Subnet Box - Light Mode */
+        .subnet-box {
+            background-color: #f0f0f0;
+            color: #191919;
+            padding: 8px 12px;
+            border-radius: 4px;
+            border: 1px solid #e0e0e0;
+            font-family: monospace;
+            margin-bottom: 4px;
+        }
         /* Exceptions for specific elements that need light text */
         .ip-box { color: #ffffff !important; }
         """
@@ -246,6 +256,33 @@ def get_theme_css(mode):
             filter: invert(1) hue-rotate(180deg);
         }
 
+        /* Expander (Manage Subnets) - Dark Mode */
+        div[data-testid="stExpander"] {
+            background-color: transparent !important;
+            border: none !important;
+            color: #e0e0e0 !important;
+        }
+        div[data-testid="stExpander"] details {
+            background-color: #1e1e1e !important;
+            border-radius: 4px;
+            border: 1px solid #333;
+        }
+        div[data-testid="stExpander"] summary {
+            background-color: #1e1e1e !important; /* Fix white header bar */
+            color: #e0e0e0 !important;
+            border-radius: 4px;
+        }
+        div[data-testid="stExpander"] summary:hover {
+            background-color: #2d2d2d !important;
+            color: #ffffff !important;
+        }
+        div[data-testid="stExpander"] summary p, 
+        div[data-testid="stExpander"] summary span,
+        div[data-testid="stExpander"] summary div {
+             color: #e0e0e0 !important;
+        }
+
+
 
         /* Dark Mode Popover/Menu Background Fix */
         div[data-baseweb="popover"] > div {
@@ -273,38 +310,80 @@ def get_theme_css(mode):
 
         /* Force text color for headers and standard text elements */
         h1, h2, h3, p, span, div { color: #e0e0e0 !important; }
-        
-        /* Dark Mode Inputs/Text/Cards override */
-        div[data-baseweb="input"] > div, input {
+
+        /* Input fields text color */
+        input, textarea {
+            color: #e0e0e0 !important;
+            background-color: transparent !important; /* Let container background show */
+        }
+        div[data-baseweb="input"] > div {
             background-color: #2d2d2d !important;
             color: #e0e0e0 !important;
             border-color: #444 !important;
         }
+        
+        /* Selectbox */
         div[data-baseweb="select"] > div {
             background-color: #2d2d2d !important;
             color: #e0e0e0 !important;
             border-color: #444 !important;
         }
         
-        /* Fix label colors (like "Search by") */
-        label { color: #e0e0e0 !important; }
+        /* Selectbox Dropdown Options */
+        div[data-baseweb="popover"] ul, 
+        div[data-baseweb="menu"] ul,
+        ul[data-testid="stSelectboxVirtualDropdown"] {
+            background-color: #2d2d2d !important;
+        }
         
+        div[data-baseweb="popover"] li, 
+        div[data-baseweb="menu"] li,
+        li[data-testid="stSelectboxVirtualDropdownOption"] {
+            color: #e0e0e0 !important;
+        }
+        
+        /* Fix label colors */
+        label { color: #e0e0e0 !important; }
+
+        /* Buttons (Restored) */
         .stButton > button {
             background-color: #2d2d2d !important;
             color: #e0e0e0 !important;
             border: 1px solid #444 !important;
         }
-        .stButton > button:hover {
-            background-color: #383838 !important;
-            border-color: #666 !important;
+        /* Specifically target Form Submit Buttons to ensure they override any defaults */
+        [data-testid="stFormSubmitButton"] > button {
+            background-color: #2d2d2d !important;
+            color: #e0e0e0 !important;
+            border: 1px solid #444 !important;
         }
         
+        /* Ensure text inside all buttons is visible */
+        .stButton > button p,
+        [data-testid="stFormSubmitButton"] > button p {
+            color: #e0e0e0 !important;
+        }
+
+        .stButton > button:hover,
+        [data-testid="stFormSubmitButton"] > button:hover {
+            background-color: #383838 !important;
+            border-color: #666 !important;
+            color: #ffffff !important;
+        }
+        /* Hover text color */
+        .stButton > button:hover p,
+        [data-testid="stFormSubmitButton"] > button:hover p {
+            color: #ffffff !important;
+        }
+        
+        /* IP Grid (Restored) */
         .ip-grid {
             background: #1e1e1e;
             box-shadow: 0 2px 10px rgba(0,0,0,0.2);
             border: 1px solid #333;
         }
         
+        /* Link Button (Restored) */
         .link-button {
             background-color: #e0e0e0 !important; 
             color: #121212 !important;
@@ -314,6 +393,18 @@ def get_theme_css(mode):
             background-color: #ffffff !important;
         }
         
+        /* Subnet Box Custom Style (replacing st.code) */
+        .subnet-box {
+            background-color: #2d2d2d;
+            color: #e0e0e0;
+            padding: 8px 12px;
+            border-radius: 4px;
+            border: 1px solid #444;
+            font-family: monospace;
+            margin-bottom: 4px;
+        }
+
+
         /* Divider color */
         hr { border-color: #444 !important; }
         
@@ -429,7 +520,7 @@ def render_ip_map_page():
                 # specific layout for tags/delete
                 for s in current_subnets:
                     c1, c2 = st.columns([4, 1])
-                    c1.code(s)
+                    c1.markdown(f'<div class="subnet-box">{s}</div>', unsafe_allow_html=True)
                     if c2.button("🗑️", key=f"del_{s}"):
                         db_manager.remove_subnet(s)
                         st.rerun()
