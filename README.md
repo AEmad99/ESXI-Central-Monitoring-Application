@@ -36,7 +36,32 @@ pip install -r requirements.txt
     GROUP1_PASS=your_password_here
     GROUP2_PASS=your_password_here
     ```
-2.  **User Config**: Ensure `users.json` exists. If not, the application may fail to start.
+2.  **User Config**: The application requires a `users.json` file for authentication.
+    - **First Run**: If this file is missing, create a generic one manually or use the snippet below.
+    
+    <details>
+    <summary><b>Click to copy default <code>users.json</code> content</b></summary>
+
+    ```json
+    {
+        "cookie": {
+            "expiry_days": 30,
+            "key": "random_signature_key",
+            "name": "auth_cookie"
+        },
+        "credentials": {
+            "usernames": {
+                "admin": {
+                    "name": "Admin",
+                    "password": "$2b$12$vFNrfXSy86Xn1khBV6QJHOzhxmFzCCNTops./G1F/csKcRFOq7vg6",
+                    "role": "admin"
+                }
+            }
+        }
+    }
+    ```
+    </details>
+    *The default password for the above config is `admin`.*
 
 ## 🚦 Usage
 
