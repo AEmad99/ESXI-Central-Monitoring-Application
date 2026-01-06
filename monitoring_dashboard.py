@@ -1,17 +1,15 @@
-import ssl
 import re
 import streamlit as st
 import requests
 import streamlit_authenticator as stauth
 import json
 import platform
-import subprocess
 from concurrent.futures import ThreadPoolExecutor
 import time
 import os
-import atexit
 from datetime import datetime, timedelta
 import pandas as pd # Added for easier DB to DF conversion
+
 
 # --- New Modules ---
 import db_manager
@@ -252,8 +250,17 @@ def get_theme_css(mode):
         }
         
         /* Force DataFrame to fit Dark Theme via inversion */
+        /* Force DataFrame to fit Dark Theme via inversion */
         [data-testid="stDataFrame"] {
-            filter: invert(1) hue-rotate(180deg);
+            filter: invert(0.9) hue-rotate(180deg) brightness(1.2); /* Adjusted for better contrast/less muddiness */
+        }
+        
+        /* Dark Mode Progress Bar Background - Fix "Flash" */
+        .stProgress > div > div > div > div {
+             background-color: #d97757 !important; /* Keep fill color same */
+        }
+        .stProgress > div > div > div {
+             background-color: #333333 !important; /* Darken the empty track */
         }
 
         /* Expander (Manage Subnets) - Dark Mode */
@@ -283,7 +290,7 @@ def get_theme_css(mode):
         }
 
 
-
+        
         /* Dark Mode Popover/Menu Background Fix */
         div[data-baseweb="popover"] > div {
             background-color: #1a1a1a !important;
@@ -606,6 +613,7 @@ def render_ip_map_page():
                     if st.button(f"Go to Host {vm['host_ip']}", key=f"btn_host_{inspect_ip}"):
                         st.session_state.host = vm['host_ip']
                         st.session_state.page = 'dashboard'
+                        st.query_params["page"] = "dashboard"
                         st.rerun()
             else:
                 if inspect_ip in active_ips:
@@ -714,8 +722,8 @@ def display_host_details(host_ip):
     with col1:
         st.header(f"🖥️ Details for {host_ip}")
     with col2:
-        st.markdown(f'<a href="https://{host_ip}" target="_blank" class="link-button">View</a>', unsafe_allow_html=True)
-        if st.button("← Back to Hub", key=f"back_details_{host_ip}", use_container_width=True):
+        st.markdown(f'<a href="https://{host_ip}" target="_blank" class="link-button">OPEN ESXi WEB CLIENT</a>', unsafe_allow_html=True)
+        if st.button("← BACK TO HUB", key=f"back_details_{host_ip}", use_container_width=True):
             st.session_state.host = None
             st.rerun()
 
@@ -859,7 +867,7 @@ def main():
         users_config['cookie']['expiry_days']
     )
 
-    # Header with Icon and Title
+    # --- Header ---
     header_col1, header_col2 = st.columns([1, 10])
     with header_col1:
         try:
@@ -869,7 +877,6 @@ def main():
             
     with header_col2:
          st.markdown("<h2 style='margin-top: 10px;'>ESXi Monitoring Dashboard</h2>", unsafe_allow_html=True)
-
 
     
     authenticator.login(location='main')
@@ -888,15 +895,16 @@ def main():
     # Get the role from users.json based on the authenticated username
     st.session_state['role'] = users_config['credentials']['usernames'][username]['role']
 
-    # --- Main Application ---
-    # Restore navigation via URL params (required for HTML grid links)
-    if "page" in st.query_params:
+    # --- Router / URL Logic ---
+    # 1. Sync State <- URL (On Load)
+    if "page" in st.query_params and st.session_state.get("page") != st.query_params["page"]:
         st.session_state.page = st.query_params["page"]
-
+    
+    # Default
     if 'page' not in st.session_state:
         st.session_state.page = 'dashboard'
     
-    
+    # 2. Sidebar Navigation (Updates URL)
     with st.sidebar:
         st.title("Menu")
         
@@ -909,29 +917,39 @@ def main():
             
         st.divider()
         
+        # Dashboard
         if st.button("📊 Dashboard", use_container_width=True):
-
             st.session_state.page = 'dashboard'
-            st.session_state.host = None # Reset host view
+            st.session_state.host = None
             st.session_state.found_vms = None
-            st.query_params.clear() 
+            st.query_params.clear()
+            st.query_params["page"] = "dashboard"
             st.rerun()
             
+        # IP Map
         if st.button("🌐 IP Map", use_container_width=True):
             st.session_state.page = 'ip_management'
+            st.query_params.clear()
+            st.query_params["page"] = "ip_management"
             st.rerun()
 
+        # Recent VMs
         if st.button("🕒 Recently Created", use_container_width=True):
             st.session_state.page = 'recent_vms'
+            st.query_params.clear()
+            st.query_params["page"] = "recent_vms"
             st.rerun()
 
+        # Admin
         if st.session_state.get('role') == 'admin':
             if st.button("⚙️ User Mgmt", use_container_width=True):
                 st.session_state.page = 'user_management'
+                st.query_params.clear()
+                st.query_params["page"] = "user_management"
                 st.rerun()
         
         st.divider()
-        authenticator.logout('🚪 Logout', location='sidebar')
+        authenticator.logout('🚪 LOGOUT', location='sidebar')
         st.divider()
         
         if st.button("🔄 Refresh Data", use_container_width=True):
@@ -977,6 +995,7 @@ def main():
                         if st.button("View Host", key=f"view_host_{i}_{vm['name']}"):
                             st.session_state.host = vm['host_ip']
                             st.session_state.found_vms = None
+                            # No page change needed, just host view update
                             st.rerun()
             elif query and not st.session_state.found_vms:
                  st.error(f"No VMs found matching '{query}'.")
@@ -1028,11 +1047,11 @@ def main():
 
                         b_col1, b_col2 = st.columns(2)
                         with b_col1:
-                            if st.button("Details", key=f"btn_details_{host_data['ip']}"):
+                            if st.button("DETAILS", key=f"btn_details_{host_data['ip']}"):
                                 st.session_state.host = host_data['ip']
                                 st.rerun()
                         with b_col2:
-                            st.markdown(f'<a href="https://{host_data["ip"]}" target="_blank" class="link-button">View</a>', unsafe_allow_html=True)
+                            st.markdown(f'<a href="https://{host_data["ip"]}" target="_blank" class="link-button">OPEN</a>', unsafe_allow_html=True)
 
 
 if __name__ == "__main__":

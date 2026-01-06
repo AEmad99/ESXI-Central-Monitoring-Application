@@ -8,7 +8,6 @@ import requests
 from pyVim import connect
 from pyVmomi import vim, vmodl
 import db_manager
-import time
 
 # Disable SSL warnings
 requests.packages.urllib3.disable_warnings()

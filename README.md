@@ -31,31 +31,33 @@ pip install -r requirements.txt
 ```
 
 ### 3. Configuration
-Create a `.env` file in the root directory to store your ESXi host passwords securely:
-
-```env
-GROUP1_PASS=your_password_here
-GROUP2_PASS=your_password_here
-```
-
-*Note: Host IPs and groups are currently configured in the seeding logic within `monitoring_dashboard.py`.*
+1.  **Environment Variables**: Create a `.env` file in the root directory to store your ESXi host passwords:
+    ```env
+    GROUP1_PASS=your_password_here
+    GROUP2_PASS=your_password_here
+    ```
+2.  **User Config**: Ensure `users.json` exists. If not, the application may fail to start.
 
 ## 🚦 Usage
 
-### Start the Dashboard
-Run the Streamlit application to access the web interface:
+### Start the Application
+Run the Streamlit application to launch the dashboard:
 
 ```bash
 streamlit run monitoring_dashboard.py
 ```
 
-### Start the Background Updater
-To keep the data fresh without keeping the dashboard open, run the background worker:
+- **Default credentials**: `admin` / `admin`
+- Access the dashboard at `http://localhost:8501`
+
+### Background Data Collection
+To keep data fresh, run the background worker in a separate terminal:
 
 ```bash
 python background_job.py
 ```
 
 ## 🔒 Security
-- Sensitive files like `.env`, `monitoring.db`, and `users.json` are excluded from version control via `.gitignore`.
+- Sensitive files (`.env`, `monitoring.db`, `users.json`, logos) are excluded from version control via `.gitignore`.
 - Password hashing is used for dashboard user accounts via `streamlit-authenticator`.
+
