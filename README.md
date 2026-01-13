@@ -61,7 +61,16 @@ pip install -r requirements.txt
     }
     ```
     </details>
+    ```
+    </details>
     *The default password for the above config is `admin`.*
+
+    #### Session Expiration Configuration
+    To configure how long a user stays logged in, modify the `expiry_days` value in `users.json`.
+    - **8 Hours**: `0.333333` (8/24)
+    - **1 Day**: `1`
+    - **30 Days**: `30`
+    - **1 Minute (Testing)**: `0.000694`
 
 ## 🚦 Usage
 
