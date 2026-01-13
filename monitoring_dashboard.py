@@ -64,6 +64,12 @@ st.session_state.db_initialized = True
 
 
 # --- Theme Management ---
+# Check for theme in URL first (Priority: URL defaults to Light -> Session State)
+if "theme" in st.query_params:
+    param_theme = st.query_params["theme"]
+    if param_theme in ["Light", "Dark"]:
+        st.session_state.theme = param_theme
+
 if 'theme' not in st.session_state:
     st.session_state.theme = 'Light'
 
@@ -76,6 +82,7 @@ def get_theme_css(mode):
     html, body, [class*="css"] {
         font-family: 'Outfit', sans-serif !important;
     }
+
     
     /* Headers */
     h1, h2, h3 {
@@ -643,7 +650,9 @@ def render_ip_map_page():
             status_class = "ip-free"
             tooltip = f"{current_ip} (Available)"
             
-        link = f"?page=ip_management&subnet={selected_subnet}&inspect_ip={current_ip}"
+        # Ensure theme is preserved in the link
+        current_theme = st.session_state.get('theme', 'Light')
+        link = f"?page=ip_management&subnet={selected_subnet}&inspect_ip={current_ip}&theme={current_theme}"
         grid_html += f'<a href="{link}" target="_self" class="ip-link"><div class="ip-box {status_class}" title="{tooltip}">{i}</div></a>'
     
     grid_html += '</div>'
@@ -909,10 +918,14 @@ def main():
         st.title("Menu")
         
         # Theme Toggle
-        theme_val = st.toggle("Dark Mode", value=(st.session_state.theme == 'Dark'))
-        new_theme = "Dark" if theme_val else "Light"
-        if new_theme != st.session_state.theme:
+        # We use a callback or check value change to update URL immediately
+        is_dark = (st.session_state.theme == 'Dark')
+        theme_val = st.toggle("Dark Mode", value=is_dark)
+        
+        if theme_val != is_dark:
+            new_theme = "Dark" if theme_val else "Light"
             st.session_state.theme = new_theme
+            st.query_params["theme"] = new_theme
             st.rerun()
             
         st.divider()
@@ -922,8 +935,10 @@ def main():
             st.session_state.page = 'dashboard'
             st.session_state.host = None
             st.session_state.found_vms = None
+            # Clear all params then set defaults
             st.query_params.clear()
             st.query_params["page"] = "dashboard"
+            st.query_params["theme"] = st.session_state.theme
             st.rerun()
             
         # IP Map
@@ -931,6 +946,7 @@ def main():
             st.session_state.page = 'ip_management'
             st.query_params.clear()
             st.query_params["page"] = "ip_management"
+            st.query_params["theme"] = st.session_state.theme
             st.rerun()
 
         # Recent VMs
@@ -938,6 +954,7 @@ def main():
             st.session_state.page = 'recent_vms'
             st.query_params.clear()
             st.query_params["page"] = "recent_vms"
+            st.query_params["theme"] = st.session_state.theme
             st.rerun()
 
         # Admin
@@ -946,6 +963,7 @@ def main():
                 st.session_state.page = 'user_management'
                 st.query_params.clear()
                 st.query_params["page"] = "user_management"
+                st.query_params["theme"] = st.session_state.theme
                 st.rerun()
         
         st.divider()

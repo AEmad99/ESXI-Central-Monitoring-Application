@@ -152,6 +152,11 @@ def collect_host_data(host_row):
         options = vmodl.query.PropertyCollector.RetrieveOptions()
         result = content.propertyCollector.RetrievePropertiesEx([filter_spec], options)
 
+        # Custom Logic: specific persistence for offline VMs
+        # Fetch existing IPs for this host to preserve them if VM is powered off
+        current_db_vms = conn.execute("SELECT name, ip FROM vms WHERE host_id = ?", (host_id,)).fetchall()
+        existing_ip_map = {row['name']: row['ip'] for row in current_db_vms}
+
         # Clear old VMs for this host before inserting new snapshot
         c.execute("DELETE FROM vms WHERE host_id = ?", (host_id,))
 
@@ -194,6 +199,13 @@ def collect_host_data(host_row):
                 
                 # Join unique IPs
                 ip_address = ", ".join(sorted(set(ip_list))) if ip_list else "N/A"
+                
+                # Persistence Check: If IP is N/A, check our cache
+                if ip_address == "N/A":
+                    cached_ip = existing_ip_map.get(config_name)
+                    if cached_ip and cached_ip != "N/A":
+                        print(f"Using cached IP {cached_ip} for offline VM {config_name}")
+                        ip_address = cached_ip
 
                 create_date = vm_props.get("config.createDate")
                 power_state = vm_props.get("runtime.powerState", "Unknown")
