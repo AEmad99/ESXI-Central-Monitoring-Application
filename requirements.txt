@@ -5,3 +5,4 @@ streamlit-authenticator
 PyYAML
 FLASK
 python-dotenv
+sqlalchemy
