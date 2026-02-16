@@ -6,3 +6,9 @@ PyYAML
 FLASK
 python-dotenv
 sqlalchemy
+google-generativeai
+pandas
+tabulate
+ctransformers
+huggingface-hub
+ollama

@@ -95,3 +95,31 @@ python background_job.py
 - Sensitive files (`.env`, `monitoring.db`, `users.json`, logos) are excluded from version control via `.gitignore`.
 - Password hashing is used for dashboard user accounts via `streamlit-authenticator`.
 
+
+## 🤖 Local Data Analyst Chatbot
+
+The application features a powerful local chatbot for analyzing your infrastructure data using natural language. It runs entirely on your server using **Ollama**, ensuring data privacy and zero cost.
+
+### Prerequisites (Server-Side)
+
+1.  **Install Ollama**:
+    -   Download and install Ollama from [ollama.com](https://ollama.com).
+    -   Ensure the Ollama service is running (`ollama serve`).
+
+2.  **Pull the Model**:
+    -   Run the following command in your server's terminal to download the optimized model:
+        ```bash
+        ollama pull qwen2.5-coder:3b
+        ```
+    -   *Note*: The application is configured to use `qwen2.5-coder:3b` by default for the best balance of speed and accuracy.
+
+3.  **Run the Application**:
+    -   Start the dashboard as usual:
+        ```bash
+        streamlit run monitoring_dashboard.py
+        ```
+    -   Navigate to the "Local Data Analyst" tab in the sidebar (or top menu if configured) to start chatting.
+
+### Troubleshooting
+-   If the chatbot says "Connection Refused", ensure Ollama is running on `localhost:11434`.
+-   If the model is slow, try a smaller quantized version or ensure your server has GPU acceleration.

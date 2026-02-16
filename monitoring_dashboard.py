@@ -16,6 +16,7 @@ import database
 from models import ESXiHost, VM, IPLease, HistoryLog, NetworkDevice, Subnet, IPStatus
 import data_collector
 from dotenv import load_dotenv
+import chatbot_component
 
 # Load environment variables
 load_dotenv()
@@ -694,6 +695,13 @@ def main():
             st.query_params["theme"] = st.session_state.theme
             st.rerun()
 
+        if st.button("🧙‍♂️ Infrastructure Wizard", use_container_width=True):
+            st.session_state.page = 'chatbot'
+            st.query_params.clear()
+            st.query_params["page"] = "chatbot"
+            st.query_params["theme"] = st.session_state.theme
+            st.rerun()
+
         if st.session_state.get('role') == 'admin':
             if st.button("⚙️ User Mgmt", use_container_width=True):
                 st.session_state.page = 'user_management'
@@ -720,6 +728,8 @@ def main():
         render_recent_vms_page()
     elif st.session_state.page == 'history':
         render_history_page()
+    elif st.session_state.page == 'chatbot':
+        chatbot_component.render_chatbot()
     else: # Dashboard page
         if 'host' not in st.session_state: st.session_state.host = None
         
