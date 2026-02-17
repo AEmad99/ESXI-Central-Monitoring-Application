@@ -95,31 +95,34 @@ python background_job.py
 - Sensitive files (`.env`, `monitoring.db`, `users.json`, logos) are excluded from version control via `.gitignore`.
 - Password hashing is used for dashboard user accounts via `streamlit-authenticator`.
 
+## 🤖 Intelligent Infrastructure Agent
 
-## 🤖 Local Data Analyst Chatbot
+The application includes a state-of-the-art **AI Infrastructure Agent** that allows you to query your ESXi environment using natural language. It translates your questions directly into optimized SQL queries and executes them against the local database.
 
-The application features a powerful local chatbot for analyzing your infrastructure data using natural language. It runs entirely on your server using **Ollama**, ensuring data privacy and zero cost.
+### 🧠 Core Engine
+The agent is powered by **Gemma 3 4B**, a lightweight yet highly capable model from Google, running locally via **Ollama**.
 
-### Prerequisites (Server-Side)
+### 🛠️ Setup (Server-Side)
 
 1.  **Install Ollama**:
-    -   Download and install Ollama from [ollama.com](https://ollama.com).
-    -   Ensure the Ollama service is running (`ollama serve`).
+    - Download and install from [ollama.com](https://ollama.com).
+    - Ensure the service is active.
 
 2.  **Pull the Model**:
-    -   Run the following command in your server's terminal to download the optimized model:
-        ```bash
-        ollama pull qwen2.5-coder:3b
-        ```
-    -   *Note*: The application is configured to use `qwen2.5-coder:3b` by default for the best balance of speed and accuracy.
+    ```bash
+    ollama pull gemma3:4b
+    ```
 
-3.  **Run the Application**:
-    -   Start the dashboard as usual:
-        ```bash
-        streamlit run monitoring_dashboard.py
-        ```
-    -   Navigate to the "Local Data Analyst" tab in the sidebar (or top menu if configured) to start chatting.
+3.  **Resource Configuration**:
+    The agent is optimized for CPU execution and defaults to using **12 threads**. You can adjust this in the sidebar under "Resource Control" to match your server's hardware.
 
-### Troubleshooting
--   If the chatbot says "Connection Refused", ensure Ollama is running on `localhost:11434`.
--   If the model is slow, try a smaller quantized version or ensure your server has GPU acceleration.
+### 💡 Example Queries
+- *"How many Cognos machines are powered on?"*
+- *"List all VMs on host 192.168.1.5"*
+- *"Which VMs have more than 4 vCPUs?"*
+- *"Find all Windows servers in the Production group"*
+
+### ⚡ Performance Features
+- **Direct SQL Execution**: Eliminates "hallucinations" by querying the ground truth database.
+- **Context Awareness**: Deeply understands the relationships between physical hosts and virtual guests.
+- **Model Keep-Alive**: The model stays loaded in RAM for near-instant subsequent responses.

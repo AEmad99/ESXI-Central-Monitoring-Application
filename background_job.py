@@ -1,7 +1,7 @@
 import time
 from datetime import datetime
 import data_collector
-import db_manager
+import database
 
 # Configuration
 UPDATE_INTERVAL_SECONDS = 3600  # 1 Hour
@@ -18,7 +18,7 @@ if __name__ == "__main__":
     print(f"Starting background job scheduler. Updating every {UPDATE_INTERVAL_SECONDS} seconds.")
     
     # Ensure DB is ready
-    db_manager.init_db()
+    database.init_db()
     
     # Run once on startup
     job()

@@ -362,7 +362,8 @@ def scan_and_store_subnet(subnet_prefix):
     print(f"Scanning subnet {subnet_prefix}.0/24...")
     ips_to_scan = [f"{subnet_prefix}.{i}" for i in range(256)]
     
-    with ThreadPoolExecutor(max_workers=50) as executor:
+    # Reduced workers to prevent CPU starvation
+    with ThreadPoolExecutor(max_workers=20) as executor:
         results = list(executor.map(scan_ip, ips_to_scan))
     
     db = database.get_session()
@@ -457,7 +458,8 @@ def update_all_hosts():
     host_ids = [h.id for h in db.query(ESXiHost).all()]
     db.close()
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    # Reduced workers for host data collection
+    with ThreadPoolExecutor(max_workers=4) as executor:
         executor.map(collect_host_data, host_ids)
 
 def update_specific_subnet(subnet):

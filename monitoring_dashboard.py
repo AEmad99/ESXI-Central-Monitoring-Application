@@ -16,7 +16,8 @@ import database
 from models import ESXiHost, VM, IPLease, HistoryLog, NetworkDevice, Subnet, IPStatus
 import data_collector
 from dotenv import load_dotenv
-import chatbot_component
+import ai_agent
+import system_monitor
 
 # Load environment variables
 load_dotenv()
@@ -621,6 +622,29 @@ def user_management(users_config, username):
         st.session_state.page = 'dashboard'
         st.rerun()
 
+def render_system_health():
+    st.title("🖥️ Monitoring Server Health")
+    st.info("Performance of the server running this dashboard and Ollama.")
+    
+    stats = system_monitor.get_system_stats()
+    proc = system_monitor.get_process_stats()
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("CPU Usage", f"{stats['cpu_usage_pct']}%", delta=f"{stats['load_1m']} (1m load)")
+        st.progress(stats['cpu_usage_pct']/100)
+    with col2:
+        st.metric("Memory Usage", f"{stats['mem_usage_pct']}%", delta=f"{stats['mem_used_gb']:.1f} GB Used")
+        st.progress(stats['mem_usage_pct']/100)
+    with col3:
+        st.metric("Disk Usage", f"{stats['disk_usage_pct']}%")
+        st.progress(stats['disk_usage_pct']/100)
+    
+    st.divider()
+    st.subheader("Process Info (Streamlit)")
+    st.write(f"CPU: {proc['proc_cpu_pct']}%")
+    st.write(f"RAM: {proc['proc_mem_mb']:.1f} MB")
+
 def main():
     try:
         with open('./users.json') as file: users_config = json.load(file)
@@ -668,6 +692,20 @@ def main():
             st.rerun()
             
         st.divider()
+        # st.subheader("🤖 AI Settings")
+        # # Initialize session state for the key as empty if not present
+        # if "gemini_api_key" not in st.session_state:
+        #     st.session_state.gemini_api_key = ""
+            
+        # st.text_input(
+        #     "Gemini API Key", 
+        #     type="password", 
+        #     key="gemini_api_key",
+        #     placeholder="Paste your API key here...",
+        #     help="Get a free key at aistudio.google.com"
+        # )
+
+        # st.divider()
         if st.button("📊 Dashboard", use_container_width=True):
             st.session_state.page = 'dashboard'
             st.session_state.host = None
@@ -695,10 +733,17 @@ def main():
             st.query_params["theme"] = st.session_state.theme
             st.rerun()
 
-        if st.button("🧙‍♂️ Infrastructure Wizard", use_container_width=True):
-            st.session_state.page = 'chatbot'
+        if st.button("🖥️ System Health", use_container_width=True):
+            st.session_state.page = 'system_health'
             st.query_params.clear()
-            st.query_params["page"] = "chatbot"
+            st.query_params["page"] = "system_health"
+            st.query_params["theme"] = st.session_state.theme
+            st.rerun()
+
+        if st.button("🧠 AI Infrastructure Agent", use_container_width=True):
+            st.session_state.page = 'ai_agent'
+            st.query_params.clear()
+            st.query_params["page"] = "ai_agent"
             st.query_params["theme"] = st.session_state.theme
             st.rerun()
 
@@ -728,8 +773,10 @@ def main():
         render_recent_vms_page()
     elif st.session_state.page == 'history':
         render_history_page()
-    elif st.session_state.page == 'chatbot':
-        chatbot_component.render_chatbot()
+    elif st.session_state.page == 'system_health':
+        render_system_health()
+    elif st.session_state.page == 'ai_agent':
+        ai_agent.render_ai_agent()
     else: # Dashboard page
         if 'host' not in st.session_state: st.session_state.host = None
         
