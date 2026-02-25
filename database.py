@@ -1,18 +1,65 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text, event
 from sqlalchemy.orm import sessionmaker
-from models import Base, ESXiHost, Subnet
+from models import Base, ESXiHost, Subnet, AppSettings
 import os
 
 DB_FILE = 'monitoring.db'
-# Check if we are running in a specific environment, but default is local file
 DATABASE_URL = f"sqlite:///{DB_FILE}"
 
-engine = create_engine(DATABASE_URL, echo=False)
+engine = create_engine(DATABASE_URL, echo=False, connect_args={"timeout": 30})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+@event.listens_for(engine, "connect")
+def _set_sqlite_wal(dbapi_conn, connection_record):
+    """Enable WAL mode for concurrent read/write access."""
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.close()
 
 def init_db():
     # create tables
     Base.metadata.create_all(bind=engine)
+    # migrate existing tables to add new columns
+    _migrate_vm_columns()
+    # ensure indexes exist
+    _create_indexes()
+
+def _migrate_vm_columns():
+    """Add numeric resource columns to vms table if they don't exist."""
+    new_columns = [
+        ("cpu_usage_mhz", "INTEGER"),
+        ("cpu_total_mhz", "INTEGER"),
+        ("cpu_usage", "REAL"),
+        ("ram_used_mb", "INTEGER"),
+        ("ram_total_mb", "INTEGER"),
+        ("ram_usage", "REAL"),
+        ("disk_total_gb", "REAL"),
+    ]
+    with engine.connect() as conn:
+        for col_name, col_type in new_columns:
+            try:
+                with conn.begin():
+                    conn.execute(text(f"ALTER TABLE vms ADD COLUMN {col_name} {col_type}"))
+            except Exception:
+                pass  # column already exists
+
+def _create_indexes():
+    """Ensure all required indexes exist in the database."""
+    indexes = [
+        ("ix_vms_name", "vms", "name"),
+        ("ix_vms_ip", "vms", "ip"),
+        ("ix_vms_power_state", "vms", "power_state"),
+        ("ix_vms_created_date", "vms", "created_date"),
+        ("ix_esxi_hosts_group_name", "esxi_hosts", "group_name"),
+        ("ix_network_devices_hostname", "network_devices", "hostname"),
+    ]
+    with engine.connect() as conn:
+        for idx_name, table, col in indexes:
+            try:
+                conn.execute(text(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({col})"))
+            except Exception:
+                pass
+        conn.commit()
 
 def get_session():
     db = SessionLocal()
@@ -89,6 +136,28 @@ def remove_subnet(prefix):
         # new: delete IPLeases for this subnet
         from models import IPLease
         db.query(IPLease).filter_by(subnet=prefix).delete()
+        db.commit()
+    finally:
+        db.close()
+
+# --- App Settings ---
+
+def get_setting(key, default=None):
+    db = get_session()
+    try:
+        row = db.query(AppSettings).filter_by(key=key).first()
+        return row.value if row else default
+    finally:
+        db.close()
+
+def set_setting(key, value):
+    db = get_session()
+    try:
+        row = db.query(AppSettings).filter_by(key=key).first()
+        if row:
+            row.value = str(value)
+        else:
+            db.add(AppSettings(key=key, value=str(value)))
         db.commit()
     finally:
         db.close()

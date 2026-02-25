@@ -17,7 +17,7 @@ class ESXiHost(Base):
     ip = Column(String, unique=True, nullable=False)
     username = Column(String, nullable=False)
     password = Column(String, nullable=False)
-    group_name = Column(String)
+    group_name = Column(String, index=True)
     
     vms = relationship("VM", back_populates="esxi_host", cascade="all, delete-orphan")
     host_metrics = relationship("HostMetrics", back_populates="esxi_host", cascade="all, delete-orphan")
@@ -43,14 +43,21 @@ class VM(Base):
     __tablename__ = 'vms'
     id = Column(Integer, primary_key=True)
     host_id = Column(Integer, ForeignKey('esxi_hosts.id'), nullable=False)
-    name = Column(String, nullable=False)
+    name = Column(String, nullable=False, index=True)
     os = Column(String)
-    ip = Column(String)
+    ip = Column(String, index=True)
     cpu_count = Column(Integer)
+    cpu_usage_mhz = Column(Integer)
+    cpu_total_mhz = Column(Integer)
+    cpu_usage = Column(Float)
+    ram_used_mb = Column(Integer)
+    ram_total_mb = Column(Integer)
+    ram_usage = Column(Float)
     ram_info = Column(String)
+    disk_total_gb = Column(Float)
     disk_info = Column(String)
-    created_date = Column(String)
-    power_state = Column(String)
+    created_date = Column(String, index=True)
+    power_state = Column(String, index=True)
     last_updated = Column(DateTime, default=datetime.now)
 
     esxi_host = relationship("ESXiHost", back_populates="vms")
@@ -63,7 +70,7 @@ class NetworkDevice(Base):
     __tablename__ = 'network_devices'
     id = Column(Integer, primary_key=True)
     mac_address = Column(String, unique=True, nullable=True)
-    hostname = Column(String)
+    hostname = Column(String, index=True)
     first_seen = Column(DateTime, default=datetime.now)
     last_seen = Column(DateTime, default=datetime.now)
     type = Column(String, default="Unknown") # 'VM', 'Physical', 'DNS Server', etc.
@@ -101,3 +108,8 @@ class HistoryLog(Base):
 class Subnet(Base):
     __tablename__ = 'subnets'
     prefix = Column(String, primary_key=True)
+
+class AppSettings(Base):
+    __tablename__ = 'app_settings'
+    key = Column(String, primary_key=True)
+    value = Column(String, nullable=False)

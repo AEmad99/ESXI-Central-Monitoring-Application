@@ -7,9 +7,4 @@ python-dotenv
 sqlalchemy
 pandas
 tabulate
-psutil
-langchain
-langchain-google-genai==2.0.10
-langchain-community
-google-generativeai==0.8.6
-google-auth-oauthlib
+google-generativeai

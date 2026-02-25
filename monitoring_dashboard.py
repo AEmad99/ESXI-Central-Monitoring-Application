@@ -10,6 +10,7 @@ import os
 from datetime import datetime, timedelta
 import pandas as pd
 from sqlalchemy import func
+from sqlalchemy.orm import joinedload
 
 # --- New Modules ---
 import database
@@ -17,7 +18,7 @@ from models import ESXiHost, VM, IPLease, HistoryLog, NetworkDevice, Subnet, IPS
 import data_collector
 from dotenv import load_dotenv
 import ai_agent
-import system_monitor
+import background_job
 
 # Load environment variables
 load_dotenv()
@@ -52,12 +53,17 @@ except Exception as e:
     st.error(f"Error loading host configuration: {e}")
     HOST_GROUPS = {}
 
-# Ensure DB is ready
-database.init_db()
-# Sync DB with current config
-database.update_hosts_from_config(HOST_GROUPS)
-database.seed_subnets_if_empty()
-st.session_state.db_initialized = True
+# Ensure DB is ready (only on first run, not every Streamlit rerun)
+if not st.session_state.get('db_initialized'):
+    database.init_db()
+    database.update_hosts_from_config(HOST_GROUPS)
+    database.seed_subnets_if_empty()
+    st.session_state.db_initialized = True
+
+# Start background collector thread (once per process, not every rerun)
+if not st.session_state.get('_bg_started'):
+    background_job.start()
+    st.session_state._bg_started = True
 
 # --- Theme Management ---
 if "theme" in st.query_params:
@@ -68,6 +74,7 @@ if "theme" in st.query_params:
 if 'theme' not in st.session_state:
     st.session_state.theme = 'Light'
 
+@st.cache_data(show_spinner=False)
 def get_theme_css(mode):
     # Common Styles
     common_css = """
@@ -146,14 +153,37 @@ def get_theme_css(mode):
 st.markdown(f"<style>{get_theme_css(st.session_state.theme)}</style>", unsafe_allow_html=True)
 
 # --- DB Fetchers (Read-Only wrappers) ---
+@st.cache_data(ttl=120, show_spinner=False)
 def fetch_hosts_with_metrics():
-    db = database.get_session()
-    hosts = db.query(ESXiHost).all()
-    results = []
-    for h in hosts:
-        metrics = h.host_metrics[0] if h.host_metrics else None
-        results.append({
-            "id": h.id, "ip": h.ip,
+    with database.SessionLocal() as db:
+        hosts = db.query(ESXiHost).options(joinedload(ESXiHost.host_metrics)).all()
+        results = []
+        for h in hosts:
+            metrics = h.host_metrics[0] if h.host_metrics else None
+            results.append({
+                "id": h.id, "ip": h.ip,
+                "cpu_usage": metrics.cpu_usage if metrics else None,
+                "used_cpu_ghz": metrics.used_cpu_ghz if metrics else 0,
+                "total_cpu_ghz": metrics.total_cpu_ghz if metrics else 0,
+                "mem_usage": metrics.mem_usage if metrics else None,
+                "used_mem_gb": metrics.used_mem_gb if metrics else 0,
+                "total_mem_gb": metrics.total_mem_gb if metrics else 0,
+                "storage_usage": metrics.storage_usage if metrics else None,
+                "used_storage_gb": metrics.used_storage_gb if metrics else 0,
+                "total_storage_gb": metrics.total_storage_gb if metrics else 0,
+                "last_updated": metrics.last_updated if metrics else None
+            })
+    return results
+
+@st.cache_data(ttl=120, show_spinner=False)
+def fetch_single_host_metrics(host_ip):
+    with database.SessionLocal() as db:
+        host = db.query(ESXiHost).filter_by(ip=host_ip).options(joinedload(ESXiHost.host_metrics)).first()
+        if not host:
+            return None
+        metrics = host.host_metrics[0] if host.host_metrics else None
+        result = {
+            "id": host.id, "ip": host.ip,
             "cpu_usage": metrics.cpu_usage if metrics else None,
             "used_cpu_ghz": metrics.used_cpu_ghz if metrics else 0,
             "total_cpu_ghz": metrics.total_cpu_ghz if metrics else 0,
@@ -164,59 +194,53 @@ def fetch_hosts_with_metrics():
             "used_storage_gb": metrics.used_storage_gb if metrics else 0,
             "total_storage_gb": metrics.total_storage_gb if metrics else 0,
             "last_updated": metrics.last_updated if metrics else None
-        })
-    db.close()
-    return results
+        }
+    return result
 
+@st.cache_data(ttl=120, show_spinner=False)
 def fetch_vms_for_host(host_ip):
-    db = database.get_session()
-    # Join to find host_id from ip
-    host = db.query(ESXiHost).filter_by(ip=host_ip).first()
-    if not host:
-        db.close()
-        return []
-    
-    vms = host.vms
-    results = []
-    for vm in vms:
-        results.append({
-            "name": vm.name, "os": vm.os, "ip": vm.ip,
-            "cpu_count": vm.cpu_count, "ram_info": vm.ram_info,
-            "disk_info": vm.disk_info, "created_date": vm.created_date,
-            "power_state": vm.power_state
-        })
-    db.close()
+    with database.SessionLocal() as db:
+        # Join to find host_id from ip
+        host = db.query(ESXiHost).filter_by(ip=host_ip).options(joinedload(ESXiHost.vms)).first()
+        if not host:
+            return []
+
+        vms = host.vms
+        results = []
+        for vm in vms:
+            results.append({
+                "name": vm.name, "os": vm.os, "ip": vm.ip,
+                "cpu_count": vm.cpu_count, "ram_info": vm.ram_info,
+                "disk_info": vm.disk_info, "created_date": vm.created_date,
+                "power_state": vm.power_state
+            })
     return results
 
+@st.cache_data(ttl=120, show_spinner=False)
 def fetch_all_vms(search_query=None, search_by="Name"):
-    db = database.get_session()
-    vms = db.query(VM).join(ESXiHost).all()
-    
-    results = []
-    for vm in vms:
-        match = False
-        if not search_query:
-            match = True
-        elif search_by == "Name" and search_query.lower() in vm.name.lower():
-            match = True
-        elif search_by == "IP":
-             stored_ips = [ip.strip() for ip in vm.ip.split(',')]
-             if search_query in stored_ips:
-                 match = True
-        
-        if match:
+    with database.SessionLocal() as db:
+        query = db.query(VM).options(joinedload(VM.esxi_host))
+
+        if search_query:
+            if search_by == "Name":
+                query = query.filter(VM.name.ilike(f"%{search_query}%"))
+            elif search_by == "IP":
+                query = query.filter(VM.ip.contains(search_query))
+
+        vms = query.all()
+        results = []
+        for vm in vms:
             results.append({
                 "name": vm.name, "os": vm.os, "ip": vm.ip,
                 "host_ip": vm.esxi_host.ip,
-                "cpu_count": vm.cpu_count, 
+                "cpu_count": vm.cpu_count,
                 "ram_info": vm.ram_info, "disk_info": vm.disk_info,
                 "created_date": vm.created_date, "power_state": vm.power_state
             })
-    db.close()
     return results
 
 def render_ip_map_page():
-    st.title("IP Address Management")
+    st.title("🌐 IP Map")
     st.markdown("### Network Availability Map")
     
     col1, col2 = st.columns([3, 1])
@@ -224,9 +248,12 @@ def render_ip_map_page():
         st.info("🟢 Green = Available | 🔴 Red = Taken (In Use) | 🟠 Orange = Reserved (Offline but Known)")
     with col2:
         if st.button("🔄 Scan ALL Zones", key="refresh_all_ips"):
-            with st.spinner("Scanning ALL configured subnets... This may take a while."):
-                data_collector.scan_all_subnets()
-            st.success("Bulk scan complete!")
+            if data_collector.is_scan_running():
+                st.warning("A subnet scan is already in progress.")
+            else:
+                import threading
+                threading.Thread(target=data_collector.scan_all_subnets, daemon=True).start()
+                st.toast("Subnet scan started in the background.")
             st.rerun()
 
     # --- Subnet Management ---
@@ -259,7 +286,7 @@ def render_ip_map_page():
                 st.info("No subnets configured.")
 
     # --- State Management & URL Sync ---
-    available_subnets = database.get_all_subnets()
+    available_subnets = current_subnets
     if not available_subnets:
         st.warning("No subnets configured. Please add a subnet above.")
         return
@@ -292,11 +319,10 @@ def render_ip_map_page():
         st.query_params["subnet"] = selected_subnet
 
     # --- Load Data from DB ---
-    db = database.get_session()
-    leases = db.query(IPLease).filter_by(subnet=selected_subnet).all()
-    # Map IP to status
-    ip_status_map = {lease.ip: lease.status for lease in leases}
-    db.close()
+    with database.SessionLocal() as db:
+        leases = db.query(IPLease).filter_by(subnet=selected_subnet).all()
+        # Map IP to status
+        ip_status_map = {lease.ip: lease.status for lease in leases}
 
     # --- Inspection Logic ---
     inspect_ip = query_params.get("inspect_ip", None)
@@ -336,19 +362,46 @@ def render_ip_map_page():
                         st.query_params["page"] = "dashboard"
                         st.rerun()
             else:
-                current_status = ip_status_map.get(inspect_ip, IPStatus.FREE)
+                with database.SessionLocal() as db:
+                    lease = db.query(IPLease).filter_by(ip=inspect_ip).first()
+                    current_status = lease.status if lease else IPStatus.FREE
+                    last_updated = lease.last_updated if lease else None
+                
                 st.info(f"Status: {current_status.value}")
+                if last_updated:
+                    st.caption(f"Last Status Change: {last_updated.strftime('%Y-%m-%d %H:%M:%S')}")
+
+                if current_status == IPStatus.RESERVED:
+                    st.warning("This IP is reserved but offline. You can manually unreserve it if the device is no longer in use.")
+                    if st.button("Unreserve IP", type="primary", use_container_width=True):
+                        with database.SessionLocal() as db:
+                            lease = db.query(IPLease).get(inspect_ip)
+                            if lease:
+                                lease.status = IPStatus.FREE
+                                lease.last_updated = datetime.now()
+                                
+                                log = HistoryLog(
+                                    timestamp=datetime.now(),
+                                    ip=inspect_ip,
+                                    status=IPStatus.FREE,
+                                    device_id=lease.device_id,
+                                    hostname_snapshot="Manual Unreserve"
+                                )
+                                db.add(log)
+                                db.commit()
+                                st.success(f"IP {inspect_ip} has been unreserved.")
+                                time.sleep(1)
+                                st.rerun()
                 
                 # Check history
                 st.markdown("#### Historical Activity")
-                db = database.get_session()
-                history = db.query(HistoryLog).filter_by(ip=inspect_ip).order_by(HistoryLog.timestamp.desc()).limit(5).all()
-                if history:
-                    hist_data = [{"Time": h.timestamp, "State": h.status.value, "Device": h.hostname_snapshot or "Unknown"} for h in history]
-                    st.dataframe(hist_data)
-                else:
-                    st.text("No history recorded.")
-                db.close()
+                with database.SessionLocal() as db:
+                    history = db.query(HistoryLog).filter_by(ip=inspect_ip).order_by(HistoryLog.timestamp.desc()).limit(5).all()
+                    if history:
+                        hist_data = [{"Time": h.timestamp, "State": h.status.value, "Device": h.hostname_snapshot or "Unknown"} for h in history]
+                        st.data_editor(hist_data, use_container_width=True, disabled=True)
+                    else:
+                        st.text("No history recorded.")
 
             if st.button("Close Details"):
                 if "inspect_ip" in st.query_params:
@@ -384,7 +437,7 @@ def render_ip_map_page():
     st.markdown(grid_html, unsafe_allow_html=True)
 
 def render_history_page():
-    st.title("🕰️ Network Time Travel & Disaster Recovery")
+    st.title("\U0001f570\ufe0f History / DR")
     
     st.markdown("### Recover Network State")
     
@@ -397,34 +450,32 @@ def render_history_page():
     target_datetime = datetime.combine(target_date, target_time)
     
     if st.button("Query History"):
-        db = database.get_session()
-        # Find the latest log for each IP before or at target_datetime
-        subquery = db.query(
-            HistoryLog.ip,
-            func.max(HistoryLog.timestamp).label('max_ts')
-        ).filter(HistoryLog.timestamp <= target_datetime).group_by(HistoryLog.ip).subquery()
-        
-        # Strict Infrastructure Filter: Only show VMs linked to known ESXi hosts
-        # Path: HistoryLog -> NetworkDevice -> VM (name match) -> ESXiHost
-        # INNER JOINs enforce that we only see records with a complete chain of ownership
-        results = db.query(HistoryLog, ESXiHost.ip).select_from(HistoryLog).join(
-            subquery, 
-            (HistoryLog.ip == subquery.c.ip) & (HistoryLog.timestamp == subquery.c.max_ts)
-        ).join(
-            NetworkDevice, HistoryLog.device_id == NetworkDevice.id
-        ).join(
-            VM, NetworkDevice.hostname == VM.name
-        ).join(
-            ESXiHost, VM.host_id == ESXiHost.id
-        ).filter(
-            HistoryLog.status != IPStatus.FREE,
-            HistoryLog.ip.like('192.168.%')
-        ).order_by(
-            ESXiHost.ip.asc(),
-            HistoryLog.ip.asc()
-        ).all()
-        
-        db.close()
+        with database.SessionLocal() as db:
+            # Find the latest log for each IP before or at target_datetime
+            subquery = db.query(
+                HistoryLog.ip,
+                func.max(HistoryLog.timestamp).label('max_ts')
+            ).filter(HistoryLog.timestamp <= target_datetime).group_by(HistoryLog.ip).subquery()
+            
+            # Strict Infrastructure Filter: Only show VMs linked to known ESXi hosts
+            # Path: HistoryLog -> NetworkDevice -> VM (name match) -> ESXiHost
+            # INNER JOINs enforce that we only see records with a complete chain of ownership
+            results = db.query(HistoryLog, ESXiHost.ip).select_from(HistoryLog).join(
+                subquery, 
+                (HistoryLog.ip == subquery.c.ip) & (HistoryLog.timestamp == subquery.c.max_ts)
+            ).join(
+                NetworkDevice, HistoryLog.device_id == NetworkDevice.id
+            ).join(
+                VM, NetworkDevice.hostname == VM.name
+            ).join(
+                ESXiHost, VM.host_id == ESXiHost.id
+            ).filter(
+                HistoryLog.status != IPStatus.FREE,
+                HistoryLog.ip.like('192.168.%')
+            ).order_by(
+                ESXiHost.ip.asc(),
+                HistoryLog.ip.asc()
+            ).all()
         
         if results:
             logs = [r[0] for r in results]
@@ -467,9 +518,32 @@ def render_history_page():
         else:
             st.info("No history found for this timestamp. Try running a 'Scan ALL Zones' to generate a baseline.")
 
+@st.cache_data(ttl=120, show_spinner=False)
+def fetch_recent_vms(start_date_str, end_date_str):
+    """Fetch VMs created within the given date range, with SQL-level filtering."""
+    with database.SessionLocal() as db:
+        vms = db.query(VM).options(joinedload(VM.esxi_host)).filter(
+            VM.created_date.isnot(None),
+            VM.created_date >= start_date_str,
+            VM.created_date <= end_date_str + "T23:59:59"
+        ).all()
+        results = []
+        for vm in vms:
+            results.append({
+                "VM IP": vm.ip,
+                "ESXi Host": vm.esxi_host.ip if vm.esxi_host else "Unknown",
+                "Name": vm.name,
+                "Created": vm.created_date,
+                "RAM": vm.ram_info,
+                "CPU": vm.cpu_count,
+                "Storage": vm.disk_info,
+                "State": vm.power_state
+            })
+    return results
+
 def render_recent_vms_page():
-    st.title("🕒 Recently Created VMs")
-    
+    st.title("\U0001f552 Recently Created")
+
     col1, col2 = st.columns(2)
     with col1:
         start_date = st.date_input("Start Date", value=datetime.now() - timedelta(days=7))
@@ -480,38 +554,11 @@ def render_recent_vms_page():
         st.error("Error: End date must fall after start date.")
         return
 
-    # Fetch from DB
-    db = database.get_session()
-    vms = db.query(VM).all() # Filter in python for date string parsing safety
-    db.close()
+    found_vms = fetch_recent_vms(start_date.isoformat(), end_date.isoformat())
 
-    found_vms = []
-    for vm in vms:
-        c_date_str = vm.created_date
-        if not c_date_str: continue
-        try:
-            dt = datetime.fromisoformat(c_date_str.replace('Z', '+00:00'))
-            if start_date <= dt.date() <= end_date:
-                 # Need to fetch host IP via relationship
-                 # Re-querying or use eager load above. 
-                 # Since we closed session, we can't access lazy loaded 'esxi_host' unless bound.
-                 # Let's simple format:
-                 found_vms.append({
-                     "VM IP": vm.ip,
-                     "ESXi Host": "Unknown (Relation Closed)", # Fix: use eager load or store ID.
-                     "Name": vm.name,
-                     "Created": vm.created_date,
-                     "RAM": vm.ram_info,
-                     "CPU": vm.cpu_count,
-                     "Storage": vm.disk_info,
-                     "State": vm.power_state
-                 })
-        except ValueError:
-            pass
-    
     if found_vms:
         st.success(f"Found {len(found_vms)} VMs.")
-        st.dataframe(found_vms, use_container_width=True)
+        st.data_editor(found_vms, use_container_width=True, disabled=True)
     else:
         st.info("No VMs found in DB matching this range.")
 
@@ -530,8 +577,7 @@ def display_host_details(host_ip):
             st.session_state.host = None
             st.rerun()
 
-    hosts_data = fetch_hosts_with_metrics()
-    host_data = next((h for h in hosts_data if h['ip'] == host_ip), None)
+    host_data = fetch_single_host_metrics(host_ip)
 
     st.subheader("Resource Usage (Cached)")
     if host_data and host_data['cpu_usage'] is not None:
@@ -570,11 +616,11 @@ def display_host_details(host_ip):
                 "Disks": vm['disk_info'], "Created": vm['created_date'],
                 "State": state_display
             })
-        st.dataframe(display_vms, use_container_width=True)
+        st.data_editor(display_vms, use_container_width=True, disabled=True)
     else: st.info("No VMs found on this host in DB.")
 
 def user_management(users_config, username):
-    st.title("User Management")
+    st.title("\u2699\ufe0f User Management")
     st.subheader("Add New User")
     with st.form("add_user_form", clear_on_submit=True):
         new_username = st.text_input("Username")
@@ -587,6 +633,7 @@ def user_management(users_config, username):
                 hashed_password = stauth.Hasher.hash(new_password)
                 users_config['credentials']['usernames'][new_username] = {'email': new_email, 'name': new_name, 'password': hashed_password, 'role': new_role}
                 with open('./users.json', 'w') as file: json.dump(users_config, file, indent=4)
+                _load_users_config.clear()
                 st.success(f"User {new_username} added successfully!")
             else: st.error("Username and Password cannot be empty.")
 
@@ -606,6 +653,7 @@ def user_management(users_config, username):
                 user_data['role'] = updated_role
                 if new_password_update: user_data['password'] = stauth.Hasher.hash(new_password_update)
                 with open('./users.json', 'w') as file: json.dump(users_config, file, indent=4)
+                _load_users_config.clear()
                 st.success(f"User {selected_username} updated successfully!")
 
     st.subheader("Delete User")
@@ -615,6 +663,7 @@ def user_management(users_config, username):
             if user_to_delete:
                 del users_config['credentials']['usernames'][user_to_delete]
                 with open('./users.json', 'w') as file: json.dump(users_config, file, indent=4)
+                _load_users_config.clear()
                 st.success(f"User {user_to_delete} deleted successfully!")
                 st.rerun()
             else: st.error("Please select a user to delete.")
@@ -622,32 +671,55 @@ def user_management(users_config, username):
         st.session_state.page = 'dashboard'
         st.rerun()
 
-def render_system_health():
-    st.title("🖥️ Monitoring Server Health")
-    st.info("Performance of the server running this dashboard and Ollama.")
+@st.cache_data(show_spinner=False)
+def _load_users_config():
+    with open('./users.json') as file:
+        return json.load(file)
+
+@st.fragment(run_every="60s")
+def render_dashboard_grid(sort_by, sort_desc):
+    all_hosts_with_metrics = fetch_hosts_with_metrics()
     
-    stats = system_monitor.get_system_stats()
-    proc = system_monitor.get_process_stats()
+    if sort_by != "Default":
+        def get_sort_key(h):
+            metric_key = f"{sort_by.lower()}_usage"
+            if sort_by == "Memory": metric_key = "mem_usage"
+            val = h[metric_key]
+            return val if val is not None else -1
+        all_hosts_with_metrics = sorted(all_hosts_with_metrics, key=get_sort_key, reverse=sort_desc)
+    elif sort_desc:
+        all_hosts_with_metrics = sorted(all_hosts_with_metrics, key=lambda x: x['ip'], reverse=True)
+
+    num_columns = 3
+    cols = st.columns(num_columns)
     
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("CPU Usage", f"{stats['cpu_usage_pct']}%", delta=f"{stats['load_1m']} (1m load)")
-        st.progress(stats['cpu_usage_pct']/100)
-    with col2:
-        st.metric("Memory Usage", f"{stats['mem_usage_pct']}%", delta=f"{stats['mem_used_gb']:.1f} GB Used")
-        st.progress(stats['mem_usage_pct']/100)
-    with col3:
-        st.metric("Disk Usage", f"{stats['disk_usage_pct']}%")
-        st.progress(stats['disk_usage_pct']/100)
-    
-    st.divider()
-    st.subheader("Process Info (Streamlit)")
-    st.write(f"CPU: {proc['proc_cpu_pct']}%")
-    st.write(f"RAM: {proc['proc_mem_mb']:.1f} MB")
+    for i, host_data in enumerate(all_hosts_with_metrics):
+        with cols[i % num_columns]:
+            with st.container(border=True):
+                st.subheader(f"🖥️ {host_data['ip']}")
+                if host_data['cpu_usage'] is None: st.warning("No data available.")
+                else:
+                    metrics = host_data
+                    cpu_usage, mem_usage, storage_usage = metrics['cpu_usage'], metrics['mem_usage'], metrics['storage_usage']
+                    cpu_color, mem_color, storage_color = get_color_from_percentage(cpu_usage), get_color_from_percentage(mem_usage), get_color_from_percentage(storage_usage)
+
+                    st.markdown(f"**CPU:** {metrics['used_cpu_ghz']:.2f}/{metrics['total_cpu_ghz']:.2f} GHz (<span style='color:{cpu_color}; font-weight:bold;'>{cpu_usage:.2f}%</span>)", unsafe_allow_html=True)
+                    st.progress(int(cpu_usage))
+                    st.markdown(f"**Memory:** {metrics['used_mem_gb']:.2f}/{metrics['total_mem_gb']:.2f} GB (<span style='color:{mem_color}; font-weight:bold;'>{mem_usage:.2f}%</span>)", unsafe_allow_html=True)
+                    st.progress(int(mem_usage))
+                    st.markdown(f"**Storage:** {metrics['used_storage_gb']:.2f}/{metrics['total_storage_gb']:.2f} GB (<span style='color:{storage_color}; font-weight:bold;'>{storage_usage:.2f}%</span>)", unsafe_allow_html=True)
+                    st.progress(int(storage_usage))
+
+                b_col1, b_col2 = st.columns(2)
+                with b_col1:
+                    if st.button("DETAILS", key=f"btn_details_{host_data['ip']}"):
+                        st.session_state.host = host_data['ip']
+                        st.rerun()
+                with b_col2: st.markdown(f'<a href="https://{host_data["ip"]}" target="_blank" class="link-button">OPEN</a>', unsafe_allow_html=True)
 
 def main():
     try:
-        with open('./users.json') as file: users_config = json.load(file)
+        users_config = _load_users_config()
     except:
         st.error("users.json not found.")
         st.stop()
@@ -692,20 +764,6 @@ def main():
             st.rerun()
             
         st.divider()
-        # st.subheader("🤖 AI Settings")
-        # # Initialize session state for the key as empty if not present
-        # if "gemini_api_key" not in st.session_state:
-        #     st.session_state.gemini_api_key = ""
-            
-        # st.text_input(
-        #     "Gemini API Key", 
-        #     type="password", 
-        #     key="gemini_api_key",
-        #     placeholder="Paste your API key here...",
-        #     help="Get a free key at aistudio.google.com"
-        # )
-
-        # st.divider()
         if st.button("📊 Dashboard", use_container_width=True):
             st.session_state.page = 'dashboard'
             st.session_state.host = None
@@ -733,13 +791,6 @@ def main():
             st.query_params["theme"] = st.session_state.theme
             st.rerun()
 
-        if st.button("🖥️ System Health", use_container_width=True):
-            st.session_state.page = 'system_health'
-            st.query_params.clear()
-            st.query_params["page"] = "system_health"
-            st.query_params["theme"] = st.session_state.theme
-            st.rerun()
-
         if st.button("🧠 AI Infrastructure Agent", use_container_width=True):
             st.session_state.page = 'ai_agent'
             st.query_params.clear()
@@ -747,8 +798,25 @@ def main():
             st.query_params["theme"] = st.session_state.theme
             st.rerun()
 
+        # --- Gemini API Configuration (visible when on AI agent page) ---
+        if st.session_state.get("page") == "ai_agent":
+            st.session_state.ai_backend = "gemini"
+            
+            # Allow user to provide their own key
+            user_key = st.sidebar.text_input(
+                "Gemini API Key",
+                type="password",
+                value=st.session_state.get("gemini_api_key", ""),
+                help="Enter your Google AI Studio API key. It is not stored permanently."
+            )
+            if user_key:
+                st.session_state.gemini_api_key = user_key
+            
+            if not st.session_state.get("gemini_api_key") and not os.getenv("GEMINI_API_KEY"):
+                st.warning("Please provide a Gemini API Key in the sidebar.")
+
         if st.session_state.get('role') == 'admin':
-            if st.button("⚙️ User Mgmt", use_container_width=True):
+            if st.button("⚙️ User Management", use_container_width=True):
                 st.session_state.page = 'user_management'
                 st.query_params.clear()
                 st.query_params["page"] = "user_management"
@@ -757,12 +825,39 @@ def main():
         
         st.divider()
         authenticator.logout('🚪 LOGOUT', location='sidebar')
+
+        # --- Data Collection Settings ---
         st.divider()
+        _interval_options = {
+            "1 min": 60, "5 min": 300, "10 min": 600,
+            "20 min": 1200, "30 min": 1800, "1 hour": 3600,
+        }
+        _interval_labels = list(_interval_options.keys())
+        _interval_values = list(_interval_options.values())
+        # Read from session_state cache (avoids DB hit every rerun)
+        if "_cached_interval" not in st.session_state:
+            st.session_state._cached_interval = background_job.get_interval_seconds()
+        _current_idx = _interval_values.index(st.session_state._cached_interval) if st.session_state._cached_interval in _interval_values else 1
+        selected_label = st.selectbox(
+            "Collection Interval",
+            options=_interval_labels,
+            index=_current_idx,
+            key="collection_interval_select",
+        )
+        _selected_secs = _interval_options[selected_label]
+        if _selected_secs != st.session_state._cached_interval:
+            background_job.set_interval_seconds(_selected_secs)
+            st.session_state._cached_interval = _selected_secs
+
+        # Collection status (reads from in-memory dict, no DB hit)
+        _status = background_job.get_status()
+        if _status["collecting"]:
+            st.caption("🔄 Collecting data...")
+        elif _status["last_run"]:
+            st.caption(f"Last update: {_status['last_run'].strftime('%H:%M:%S')}")
+
         if st.button("🔄 Refresh Data", use_container_width=True):
-             with st.spinner("Refreshing..."):
-                 data_collector.update_all_hosts()
-             st.success("Refreshed!")
-             time.sleep(0.5)
+             st.cache_data.clear()
              st.rerun()
 
     if st.session_state.page == 'user_management':
@@ -773,8 +868,6 @@ def main():
         render_recent_vms_page()
     elif st.session_state.page == 'history':
         render_history_page()
-    elif st.session_state.page == 'system_health':
-        render_system_health()
     elif st.session_state.page == 'ai_agent':
         ai_agent.render_ai_agent()
     else: # Dashboard page
@@ -801,51 +894,14 @@ def main():
                             st.rerun()
             elif query and not st.session_state.found_vms: st.error(f"No VMs found matching '{query}'.")
 
-            st.header("ESXi Host Overview")
+            st.header("\U0001f4ca Dashboard")
             sort_col1, sort_col2 = st.columns(2)
             sort_by = sort_col1.selectbox("Sort by:", ["Default", "CPU", "Memory", "Storage"], key="host_sort_by")
             with sort_col2:
                 st.markdown("<div style='height: 29px;'></div>", unsafe_allow_html=True)
                 sort_desc = st.checkbox("Descending", key="host_sort_desc")
 
-            all_hosts_with_metrics = fetch_hosts_with_metrics()
-            
-            if sort_by != "Default":
-                def get_sort_key(h):
-                    metric_key = f"{sort_by.lower()}_usage"
-                    if sort_by == "Memory": metric_key = "mem_usage"
-                    val = h[metric_key]
-                    return val if val is not None else -1
-                all_hosts_with_metrics = sorted(all_hosts_with_metrics, key=get_sort_key, reverse=sort_desc)
-            elif sort_desc:
-                all_hosts_with_metrics = sorted(all_hosts_with_metrics, key=lambda x: x['ip'], reverse=True)
-
-            num_columns = 3
-            cols = st.columns(num_columns)
-            
-            for i, host_data in enumerate(all_hosts_with_metrics):
-                with cols[i % num_columns]:
-                    with st.container(border=True):
-                        st.subheader(f"🖥️ {host_data['ip']}")
-                        if host_data['cpu_usage'] is None: st.warning("No data available.")
-                        else:
-                            metrics = host_data
-                            cpu_usage, mem_usage, storage_usage = metrics['cpu_usage'], metrics['mem_usage'], metrics['storage_usage']
-                            cpu_color, mem_color, storage_color = get_color_from_percentage(cpu_usage), get_color_from_percentage(mem_usage), get_color_from_percentage(storage_usage)
-
-                            st.markdown(f"**CPU:** {metrics['used_cpu_ghz']:.2f}/{metrics['total_cpu_ghz']:.2f} GHz (<span style='color:{cpu_color}; font-weight:bold;'>{cpu_usage:.2f}%</span>)", unsafe_allow_html=True)
-                            st.progress(int(cpu_usage))
-                            st.markdown(f"**Memory:** {metrics['used_mem_gb']:.2f}/{metrics['total_mem_gb']:.2f} GB (<span style='color:{mem_color}; font-weight:bold;'>{mem_usage:.2f}%</span>)", unsafe_allow_html=True)
-                            st.progress(int(mem_usage))
-                            st.markdown(f"**Storage:** {metrics['used_storage_gb']:.2f}/{metrics['total_storage_gb']:.2f} GB (<span style='color:{storage_color}; font-weight:bold;'>{storage_usage:.2f}%</span>)", unsafe_allow_html=True)
-                            st.progress(int(storage_usage))
-
-                        b_col1, b_col2 = st.columns(2)
-                        with b_col1:
-                            if st.button("DETAILS", key=f"btn_details_{host_data['ip']}"):
-                                st.session_state.host = host_data['ip']
-                                st.rerun()
-                        with b_col2: st.markdown(f'<a href="https://{host_data["ip"]}" target="_blank" class="link-button">OPEN</a>', unsafe_allow_html=True)
+            render_dashboard_grid(sort_by, sort_desc)
 
 if __name__ == "__main__":
     main()

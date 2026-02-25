@@ -100,21 +100,14 @@ python background_job.py
 The application includes a state-of-the-art **AI Infrastructure Agent** that allows you to query your ESXi environment using natural language. It translates your questions directly into optimized SQL queries and executes them against the local database.
 
 ### 🧠 Core Engine
-The agent is powered by **Gemma 3 4B**, a lightweight yet highly capable model from Google, running locally via **Ollama**.
+The agent is powered by **Gemini 2.0 Flash**, a high-performance, low-latency model from Google.
 
-### 🛠️ Setup (Server-Side)
+### 🛠️ Setup
 
-1.  **Install Ollama**:
-    - Download and install from [ollama.com](https://ollama.com).
-    - Ensure the service is active.
-
-2.  **Pull the Model**:
-    ```bash
-    ollama pull gemma3:4b
-    ```
-
-3.  **Resource Configuration**:
-    The agent is optimized for CPU execution and defaults to using **12 threads**. You can adjust this in the sidebar under "Resource Control" to match your server's hardware.
+1.  **API Key**: Obtain a Gemini API key from [Google AI Studio](https://aistudio.google.com/).
+2.  **Configuration**: You can either:
+    - Set the `GEMINI_API_KEY` environment variable in your `.env` file.
+    - Enter the API key directly in the application's sidebar under the **AI Infrastructure Agent** page.
 
 ### 💡 Example Queries
 - *"How many Cognos machines are powered on?"*
@@ -125,4 +118,4 @@ The agent is powered by **Gemma 3 4B**, a lightweight yet highly capable model f
 ### ⚡ Performance Features
 - **Direct SQL Execution**: Eliminates "hallucinations" by querying the ground truth database.
 - **Context Awareness**: Deeply understands the relationships between physical hosts and virtual guests.
-- **Model Keep-Alive**: The model stays loaded in RAM for near-instant subsequent responses.
+- **Hybrid Search**: Automatically resolves natural language terms to actual database values before querying.
