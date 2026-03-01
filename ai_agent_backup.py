@@ -83,7 +83,7 @@ def render_ai_agent():
                 if isinstance(df, pd.DataFrame):
                     if not df.empty:
                         st.success(f"Found {len(df)} results.")
-                        st.dataframe(df, use_container_width=True)
+                        st.dataframe(df, width='stretch')
                     else:
                         st.warning("No records found in the database.")
                 else:

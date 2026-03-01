@@ -4,17 +4,23 @@ import requests
 import streamlit_authenticator as stauth
 import json
 import platform
+import os
+
+# Fix gRPC fork issues: Disable fork support to avoid SSL corruption when subprocesses are used.
+os.environ["GRPC_ENABLE_FORK_SUPPORT"] = "false"
+
 from concurrent.futures import ThreadPoolExecutor
 import time
 import os
 from datetime import datetime, timedelta
 import pandas as pd
-from sqlalchemy import func
+import plotly.graph_objects as go
+from sqlalchemy import func, text
 from sqlalchemy.orm import joinedload
 
 # --- New Modules ---
 import database
-from models import ESXiHost, VM, IPLease, HistoryLog, NetworkDevice, Subnet, IPStatus
+from models import ESXiHost, VM, IPLease, HistoryLog, NetworkDevice, Subnet, IPStatus, HostMetrics
 import data_collector
 from dotenv import load_dotenv
 import ai_agent
@@ -79,6 +85,8 @@ def get_theme_css(mode):
     # Common Styles
     common_css = """
     @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap');
+    @import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css');
+    
     html, body, [class*="css"] { font-family: 'Outfit', sans-serif !important; }
     h1, h2, h3 { font-weight: 500 !important; letter-spacing: -0.02em !important; }
     .stButton > button { border-radius: 8px !important; font-weight: 500 !important; transition: all 0.2s cubic-bezier(0.2, 0, 0, 1) !important; }
@@ -95,6 +103,62 @@ def get_theme_css(mode):
     .ip-free { background-color: #2e7d32 !important; box-shadow: none !important; opacity: 1 !important; }
     .ip-reserved { background-color: #f57f17 !important; box-shadow: none !important; } /* Orange/Yellow for Reserved */
     .ip-down { background-color: #424242 !important; box-shadow: none !important; } /* Grey for Down if used */
+    
+    /* Skeleton Loader */
+    .skeleton { background: #eee; background: linear-gradient(110deg, #ececec 8%, #f5f5f5 18%, #ececec 33%); border-radius: 5px; background-size: 200% 100%; animation: 1.5s shine linear infinite; }
+    @keyframes shine { to { background-position-x: -200%; } }
+    .skeleton-text { height: 1rem; margin-bottom: 0.5rem; width: 100%; }
+    .skeleton-chart { height: 250px; width: 100%; }
+    .skeleton-table { height: 300px; width: 100%; }
+    
+    /* Modern Sexy UI Enhancements */
+    .stMetric { background: rgba(255, 255, 255, 0.05); padding: 15px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.1); }
+    [data-testid="stVerticalBlock"] > div > div > div[data-testid="stMetric"] { background: transparent !important; border: none !important; }
+    
+    /* Modern Minimalist Action Buttons (Ghost Style) */
+    .minimalist-actions {
+        display: flex !important;
+        flex-direction: row !important;
+        gap: 2px !important;
+        justify-content: flex-start !important;
+        align-items: center !important;
+    }
+    .minimalist-actions [data-testid="column"] {
+        width: fit-content !important;
+        flex: unset !important;
+        min-width: 32px !important;
+    }
+    .minimalist-actions button {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        padding: 4px !important;
+        width: 32px !important;
+        height: 32px !important;
+        min-width: 32px !important;
+        min-height: 32px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        transition: all 0.2s ease !important;
+        border-radius: 6px !important;
+    }
+    .minimalist-actions button:hover:not(:disabled) {
+        transform: scale(1.15) !important;
+        background: rgba(128, 128, 128, 0.1) !important;
+    }
+    .minimalist-actions button:active:not(:disabled) {
+        transform: scale(0.95) !important;
+    }
+    .minimalist-actions button:disabled {
+        opacity: 0.2 !important;
+        cursor: not-allowed !important;
+    }
+    /* Icon Colors */
+    .btn-start button { color: #2e7d32 !important; }
+    .btn-stop button { color: #d32f2f !important; }
+    .btn-suspend button { color: #ffa000 !important; }
+    .btn-reset button { color: #1976d2 !important; }
     """
 
     if mode == 'Light':
@@ -111,13 +175,19 @@ def get_theme_css(mode):
         .link-button:hover { background-color: #333333 !important; }
         .subnet-box { background-color: #f0f0f0; color: #191919; padding: 8px 12px; border-radius: 4px; border: 1px solid #e0e0e0; font-family: monospace; margin-bottom: 4px; }
         .ip-box { color: #ffffff !important; }
+        .stContainer { background: #ffffff !important; border: 1px solid #f0f0f0 !important; box-shadow: 0 4px 15px rgba(0,0,0,0.05) !important; border-radius: 16px !important; }
         """
     else: # Dark Mode
         return common_css + """
-        .stApp { background-color: #121212 !important; color: #e0e0e0 !important; }
-        header[data-testid="stHeader"] { background-color: #121212 !important; }
+        .skeleton { background: #222; background: linear-gradient(110deg, #1a1a1a 8%, #252525 18%, #1a1a1a 33%); background-size: 200% 100%; }
+        .stApp { background-color: #0e1117 !important; color: #e0e0e0 !important; }
+        header[data-testid="stHeader"] { background-color: #0e1117 !important; }
         header[data-testid="stHeader"] button { background-color: transparent !important; color: #e0e0e0 !important; }
         header[data-testid="stHeader"] svg { fill: #e0e0e0 !important; color: #e0e0e0 !important; }
+        .stContainer { background: rgba(255, 255, 255, 0.03) !important; border: 1px solid rgba(255, 255, 255, 0.1) !important; backdrop-filter: blur(10px) !important; border-radius: 16px !important; }
+        [data-testid="stSidebar"] { background-color: #161b22 !important; border-right: 1px solid #30363d; }
+        h1, h2, h3, p, span, div { color: #e0e0e0 !important; }
+        .ip-box { color: #ffffff !important; }
         [data-testid="stDataFrame"] { filter: invert(0.9) hue-rotate(180deg) brightness(1.2); }
         .stProgress > div > div > div > div { background-color: #d97757 !important; }
         .stProgress > div > div > div { background-color: #333333 !important; }
@@ -129,8 +199,6 @@ def get_theme_css(mode):
         div[data-baseweb="popover"] > div { background-color: #1a1a1a !important; color: #e0e0e0 !important; border: 1px solid #333; }
         div[data-baseweb="popover"] li, div[data-baseweb="popover"] div, div[data-baseweb="popover"] span, div[data-baseweb="popover"] p { color: #e0e0e0 !important; }
         div[data-baseweb="popover"] li:hover { background-color: #333 !important; }
-        [data-testid="stSidebar"] { background-color: #1a1a1a !important; border-right: 1px solid #333; }
-        h1, h2, h3, p, span, div { color: #e0e0e0 !important; }
         input, textarea { color: #e0e0e0 !important; background-color: transparent !important; }
         div[data-baseweb="input"] > div { background-color: #2d2d2d !important; color: #e0e0e0 !important; border-color: #444 !important; }
         div[data-baseweb="select"] > div { background-color: #2d2d2d !important; color: #e0e0e0 !important; border-color: #444 !important; }
@@ -147,55 +215,76 @@ def get_theme_css(mode):
         .link-button:hover { background-color: #ffffff !important; }
         .subnet-box { background-color: #2d2d2d; color: #e0e0e0; padding: 8px 12px; border-radius: 4px; border: 1px solid #444; font-family: monospace; margin-bottom: 4px; }
         hr { border-color: #444 !important; }
-        .ip-box { color: #ffffff !important; }
         """
 
 st.markdown(f"<style>{get_theme_css(st.session_state.theme)}</style>", unsafe_allow_html=True)
 
 # --- DB Fetchers (Read-Only wrappers) ---
-@st.cache_data(ttl=120, show_spinner=False)
-def fetch_hosts_with_metrics():
-    with database.SessionLocal() as db:
-        hosts = db.query(ESXiHost).options(joinedload(ESXiHost.host_metrics)).all()
-        results = []
-        for h in hosts:
-            metrics = h.host_metrics[0] if h.host_metrics else None
-            results.append({
-                "id": h.id, "ip": h.ip,
-                "cpu_usage": metrics.cpu_usage if metrics else None,
-                "used_cpu_ghz": metrics.used_cpu_ghz if metrics else 0,
-                "total_cpu_ghz": metrics.total_cpu_ghz if metrics else 0,
-                "mem_usage": metrics.mem_usage if metrics else None,
-                "used_mem_gb": metrics.used_mem_gb if metrics else 0,
-                "total_mem_gb": metrics.total_mem_gb if metrics else 0,
-                "storage_usage": metrics.storage_usage if metrics else None,
-                "used_storage_gb": metrics.used_storage_gb if metrics else 0,
-                "total_storage_gb": metrics.total_storage_gb if metrics else 0,
-                "last_updated": metrics.last_updated if metrics else None
-            })
-    return results
+def safe_parse_datetime(dt_val):
+    """Helper to handle SQLite datetime strings vs objects."""
+    if not dt_val: return None
+    if isinstance(dt_val, datetime): return dt_val
+    try:
+        # SQLite often returns 'YYYY-MM-DD HH:MM:SS.mmmmmm'
+        return datetime.fromisoformat(str(dt_val).split('+')[0])
+    except:
+        return None
 
-@st.cache_data(ttl=120, show_spinner=False)
-def fetch_single_host_metrics(host_ip):
+def fetch_hosts_with_metrics():
+    """Optimized fetcher using Window Functions to get latest metrics for all hosts in ONE query."""
     with database.SessionLocal() as db:
-        host = db.query(ESXiHost).filter_by(ip=host_ip).options(joinedload(ESXiHost.host_metrics)).first()
-        if not host:
+        raw_results = db.execute(
+            text("""
+                SELECT h.id, h.ip, h.last_synced, m.cpu_usage, m.used_cpu_ghz, m.total_cpu_ghz, 
+                       m.mem_usage, m.used_mem_gb, m.total_mem_gb, m.storage_usage, 
+                       m.used_storage_gb, m.total_storage_gb, m.last_updated
+                FROM esxi_hosts h
+                LEFT JOIN (
+                    SELECT *, ROW_NUMBER() OVER (PARTITION BY host_id ORDER BY last_updated DESC) as rn
+                    FROM host_metrics
+                ) m ON h.id = m.host_id AND m.rn = 1
+            """)
+        ).fetchall()
+        
+        final_results = []
+        for r in raw_results:
+            final_results.append({
+                "id": r[0], "ip": r[1], "last_synced": safe_parse_datetime(r[2]),
+                "cpu_usage": r[3], "used_cpu_ghz": r[4], "total_cpu_ghz": r[5],
+                "mem_usage": r[6], "used_mem_gb": r[7], "total_mem_gb": r[8],
+                "storage_usage": r[9], "used_storage_gb": r[10], "total_storage_gb": r[11],
+                "last_updated": safe_parse_datetime(r[12])
+            })
+    return final_results
+
+def fetch_single_host_metrics(host_ip):
+    """Surgical fetch for a single host's latest metrics."""
+    with database.SessionLocal() as db:
+        r = db.execute(
+            text("""
+                SELECT h.id, h.ip, h.last_synced, m.cpu_usage, m.used_cpu_ghz, m.total_cpu_ghz, 
+                       m.mem_usage, m.used_mem_gb, m.total_mem_gb, m.storage_usage, 
+                       m.used_storage_gb, m.total_storage_gb, m.last_updated
+                FROM esxi_hosts h
+                LEFT JOIN (
+                    SELECT *, ROW_NUMBER() OVER (PARTITION BY host_id ORDER BY last_updated DESC) as rn
+                    FROM host_metrics
+                ) m ON h.id = m.host_id AND m.rn = 1
+                WHERE h.ip = :ip
+            """),
+            {"ip": host_ip}
+        ).fetchone()
+        
+        if not r:
             return None
-        metrics = host.host_metrics[0] if host.host_metrics else None
-        result = {
-            "id": host.id, "ip": host.ip,
-            "cpu_usage": metrics.cpu_usage if metrics else None,
-            "used_cpu_ghz": metrics.used_cpu_ghz if metrics else 0,
-            "total_cpu_ghz": metrics.total_cpu_ghz if metrics else 0,
-            "mem_usage": metrics.mem_usage if metrics else None,
-            "used_mem_gb": metrics.used_mem_gb if metrics else 0,
-            "total_mem_gb": metrics.total_mem_gb if metrics else 0,
-            "storage_usage": metrics.storage_usage if metrics else None,
-            "used_storage_gb": metrics.used_storage_gb if metrics else 0,
-            "total_storage_gb": metrics.total_storage_gb if metrics else 0,
-            "last_updated": metrics.last_updated if metrics else None
+            
+        return {
+            "id": r[0], "ip": r[1], "last_synced": safe_parse_datetime(r[2]),
+            "cpu_usage": r[3], "used_cpu_ghz": r[4], "total_cpu_ghz": r[5],
+            "mem_usage": r[6], "used_mem_gb": r[7], "total_mem_gb": r[8],
+            "storage_usage": r[9], "used_storage_gb": r[10], "total_storage_gb": r[11],
+            "last_updated": safe_parse_datetime(r[12])
         }
-    return result
 
 @st.cache_data(ttl=120, show_spinner=False)
 def fetch_vms_for_host(host_ip):
@@ -208,8 +297,15 @@ def fetch_vms_for_host(host_ip):
         vms = host.vms
         results = []
         for vm in vms:
+            vm_ip = vm.ip
+            if not vm_ip or vm_ip == "N/A":
+                # Fallback: Check history for this VM name
+                last_log = db.query(HistoryLog).filter_by(hostname_snapshot=vm.name).order_by(HistoryLog.timestamp.desc()).first()
+                if last_log:
+                    vm_ip = f"{last_log.ip} (Auto-Detected)"
+
             results.append({
-                "name": vm.name, "os": vm.os, "ip": vm.ip,
+                "name": vm.name, "os": vm.os, "ip": vm_ip,
                 "cpu_count": vm.cpu_count, "ram_info": vm.ram_info,
                 "disk_info": vm.disk_info, "created_date": vm.created_date,
                 "power_state": vm.power_state
@@ -230,8 +326,15 @@ def fetch_all_vms(search_query=None, search_by="Name"):
         vms = query.all()
         results = []
         for vm in vms:
+            vm_ip = vm.ip
+            if not vm_ip or vm_ip == "N/A":
+                # Fallback: Check history for this VM name
+                last_log = db.query(HistoryLog).filter_by(hostname_snapshot=vm.name).order_by(HistoryLog.timestamp.desc()).first()
+                if last_log:
+                    vm_ip = f"{last_log.ip} (Auto-Detected)"
+
             results.append({
-                "name": vm.name, "os": vm.os, "ip": vm.ip,
+                "name": vm.name, "os": vm.os, "ip": vm_ip,
                 "host_ip": vm.esxi_host.ip,
                 "cpu_count": vm.cpu_count,
                 "ram_info": vm.ram_info, "disk_info": vm.disk_info,
@@ -265,7 +368,10 @@ def render_ip_map_page():
                 if st.form_submit_button("Add"):
                     if new_subnet and re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}$", new_subnet):
                         if database.add_subnet(new_subnet):
-                            st.success(f"Added {new_subnet}")
+                            with st.spinner(f"Scanning {new_subnet}..."):
+                                data_collector.scan_single_subnet(new_subnet)
+                            st.success(f"Added and scanned {new_subnet}")
+                            st.cache_data.clear()
                             st.rerun()
                         else:
                             st.error("Subnet already exists.")
@@ -373,7 +479,7 @@ def render_ip_map_page():
 
                 if current_status == IPStatus.RESERVED:
                     st.warning("This IP is reserved but offline. You can manually unreserve it if the device is no longer in use.")
-                    if st.button("Unreserve IP", type="primary", use_container_width=True):
+                    if st.button("Unreserve IP", type="primary", width='stretch'):
                         with database.SessionLocal() as db:
                             lease = db.query(IPLease).get(inspect_ip)
                             if lease:
@@ -390,6 +496,7 @@ def render_ip_map_page():
                                 db.add(log)
                                 db.commit()
                                 st.success(f"IP {inspect_ip} has been unreserved.")
+                                st.cache_data.clear()
                                 time.sleep(1)
                                 st.rerun()
                 
@@ -399,7 +506,7 @@ def render_ip_map_page():
                     history = db.query(HistoryLog).filter_by(ip=inspect_ip).order_by(HistoryLog.timestamp.desc()).limit(5).all()
                     if history:
                         hist_data = [{"Time": h.timestamp, "State": h.status.value, "Device": h.hostname_snapshot or "Unknown"} for h in history]
-                        st.data_editor(hist_data, use_container_width=True, disabled=True)
+                        st.data_editor(hist_data, width='stretch', disabled=True)
                     else:
                         st.text("No history recorded.")
 
@@ -501,7 +608,7 @@ def render_history_page():
             df = df[["Physical Server", "VM Name", "IP Address", "Last Status", "Snapshot Time"]]
             
             # Display
-            st.dataframe(df, use_container_width=True)
+            st.dataframe(df, width='stretch')
             
             # Export Logic
             csv_df = df.copy()
@@ -558,7 +665,7 @@ def render_recent_vms_page():
 
     if found_vms:
         st.success(f"Found {len(found_vms)} VMs.")
-        st.data_editor(found_vms, use_container_width=True, disabled=True)
+        st.data_editor(found_vms, width='stretch', disabled=True)
     else:
         st.info("No VMs found in DB matching this range.")
 
@@ -567,13 +674,134 @@ def get_color_from_percentage(percentage):
     if percentage > 70: return "orange"
     return "green"
 
+def show_skeleton(skeleton_type="text"):
+    """Helper to display skeleton loaders."""
+    if skeleton_type == "chart":
+        st.markdown('<div class="skeleton skeleton-chart"></div>', unsafe_allow_html=True)
+    elif skeleton_type == "table":
+        st.markdown('<div class="skeleton skeleton-table"></div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="skeleton skeleton-text"></div>', unsafe_allow_html=True)
+
+@st.fragment
+def render_vm_action_buttons(vm_name, host_ip, current_state):
+    """Modern Minimalist VM power controls with state-aware disabling."""
+    if st.session_state.get('role') == 'admin':
+        is_on = "poweredOn" in current_state
+        is_off = "poweredOff" in current_state
+        is_suspended = "suspended" in current_state
+
+        st.markdown('<div class="minimalist-actions">', unsafe_allow_html=True)
+        # Use very tight columns for icons
+        c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
+        
+        # Power ON
+        with c1:
+            st.markdown('<div class="btn-start">', unsafe_allow_html=True)
+            if st.button("▶️", key=f"on_{vm_name}_{host_ip}", help="Power On (Start VM)", disabled=is_on):
+                with st.spinner("Powering on..."):
+                    success, msg = data_collector.vm_power_action(host_ip, vm_name, 'on')
+                    if success: 
+                        st.toast(f"🚀 {msg}")
+                        # Targeted Refresh
+                        data_collector.update_single_host_by_ip(host_ip, vm_name)
+                        st.cache_data.clear()
+                        st.rerun()
+                    else: st.error(msg)
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Power OFF
+        with c2:
+            st.markdown('<div class="btn-stop">', unsafe_allow_html=True)
+            if st.button("⏹️", key=f"off_{vm_name}_{host_ip}", help="Power Off (Hard Shutdown)", disabled=is_off):
+                with st.spinner("Powering off..."):
+                    success, msg = data_collector.vm_power_action(host_ip, vm_name, 'off')
+                    if success: 
+                        st.toast(f"🛑 {msg}")
+                        data_collector.update_single_host_by_ip(host_ip, vm_name)
+                        st.cache_data.clear()
+                        st.rerun()
+                    else: st.error(msg)
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Suspend
+        with c3:
+            st.markdown('<div class="btn-suspend">', unsafe_allow_html=True)
+            if st.button("🟠", key=f"susp_{vm_name}_{host_ip}", help="Suspend VM", disabled=not is_on):
+                with st.spinner("Suspending..."):
+                    success, msg = data_collector.vm_power_action(host_ip, vm_name, 'suspend')
+                    if success: 
+                        st.toast(f"🌙 {msg}")
+                        data_collector.update_single_host_by_ip(host_ip, vm_name)
+                        st.cache_data.clear()
+                        st.rerun()
+                    else: st.error(msg)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        # Reset
+        with c4:
+            st.markdown('<div class="btn-reset">', unsafe_allow_html=True)
+            if st.button("🔄", key=f"reset_{vm_name}_{host_ip}", help="Reset (Hard Reboot)", disabled=not is_on):
+                with st.spinner("Resetting..."):
+                    success, msg = data_collector.vm_power_action(host_ip, vm_name, 'reset')
+                    if success: 
+                        st.toast(f"♻️ {msg}")
+                        data_collector.update_single_host_by_ip(host_ip, vm_name)
+                        st.cache_data.clear()
+                        st.rerun()
+                    else: st.error(msg)
+            st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+@st.fragment(run_every="10s")
+def render_host_trends_fragment(host_id):
+    """Interactive Plotly chart for host resource trends over last 7 days."""
+    chart_placeholder = st.empty()
+    with chart_placeholder:
+        show_skeleton("chart")
+        
+    with database.SessionLocal() as db:
+        # Fetch last 7 days of metrics for long-term visibility
+        seven_days_ago = datetime.now() - timedelta(days=7)
+        metrics = db.query(HostMetrics).filter(
+            HostMetrics.host_id == host_id,
+            HostMetrics.last_updated >= seven_days_ago
+        ).order_by(HostMetrics.last_updated.asc()).all()
+    
+    if not metrics:
+        chart_placeholder.caption("Collecting trend data... (Need at least 2 data points)")
+        return
+
+    df = pd.DataFrame([{
+        "Time": m.last_updated,
+        "CPU %": m.cpu_usage,
+        "Memory %": m.mem_usage,
+        "Storage %": m.storage_usage
+    } for m in metrics])
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df['Time'], y=df['CPU %'], name="CPU", line=dict(color='#d97757', width=2)))
+    fig.add_trace(go.Scatter(x=df['Time'], y=df['Memory %'], name="RAM", line=dict(color='#57a0d9', width=2)))
+    
+    fig.update_layout(
+        height=250,
+        margin=dict(l=0, r=0, t=30, b=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        yaxis=dict(range=[0, 100], title="Usage %", gridcolor='#333'),
+        xaxis=dict(title="Date", gridcolor='#333', type='date'),
+        hovermode="x unified"
+    )
+    chart_placeholder.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+
 def display_host_details(host_ip):
     col1, col2 = st.columns([5, 1])
     with col1:
         st.header(f"🖥️ Details for {host_ip}")
     with col2:
         st.markdown(f'<a href="https://{host_ip}" target="_blank" class="link-button">OPEN ESXi WEB CLIENT</a>', unsafe_allow_html=True)
-        if st.button("← BACK TO HUB", key=f"back_details_{host_ip}", use_container_width=True):
+        if st.button("← BACK TO HUB", key=f"back_details_{host_ip}", width='stretch'):
             st.session_state.host = None
             st.rerun()
 
@@ -585,39 +813,124 @@ def display_host_details(host_ip):
         cpu_usage, mem_usage, storage_usage = metrics['cpu_usage'], metrics['mem_usage'], metrics['storage_usage']
         cpu_color, mem_color, storage_color = get_color_from_percentage(cpu_usage), get_color_from_percentage(mem_usage), get_color_from_percentage(storage_usage)
         
-        st.markdown(f"**CPU:** {metrics['used_cpu_ghz']:.2f}/{metrics['total_cpu_ghz']:.2f} GHz (<span style='color:{cpu_color}; font-weight:bold;'>{cpu_usage:.2f}%</span>)", unsafe_allow_html=True)
-        st.progress(int(cpu_usage))
-        st.markdown(f"**Memory:** {metrics['used_mem_gb']:.2f}/{metrics['total_mem_gb']:.2f} GB (<span style='color:{mem_color}; font-weight:bold;'>{mem_usage:.2f}%</span>)", unsafe_allow_html=True)
-        st.progress(int(mem_usage))
-        st.markdown(f"**Storage:** {metrics['used_storage_gb']:.2f}/{metrics['total_storage_gb']:.2f} GB (<span style='color:{storage_color}; font-weight:bold;'>{storage_usage:.2f}%</span>)", unsafe_allow_html=True)
-        st.progress(int(storage_usage))
-        st.caption(f"Last updated: {metrics['last_updated']}")
+        col_m1, col_m2 = st.columns([1, 1])
+        with col_m1:
+            st.markdown(f"**CPU:** {metrics['used_cpu_ghz']:.2f}/{metrics['total_cpu_ghz']:.2f} GHz (<span style='color:{cpu_color}; font-weight:bold;'>{cpu_usage:.2f}%</span>)", unsafe_allow_html=True)
+            st.progress(int(cpu_usage))
+            st.markdown(f"**Memory:** {metrics['used_mem_gb']:.2f}/{metrics['total_mem_gb']:.2f} GB (<span style='color:{mem_color}; font-weight:bold;'>{mem_usage:.2f}%</span>)", unsafe_allow_html=True)
+            st.progress(int(mem_usage))
+            st.markdown(f"**Storage:** {metrics['used_storage_gb']:.2f}/{metrics['total_storage_gb']:.2f} GB (<span style='color:{storage_color}; font-weight:bold;'>{storage_usage:.2f}%</span>)", unsafe_allow_html=True)
+            st.progress(int(storage_usage))
+            st.caption(f"Last updated: {metrics['last_updated']}")
+        
+        with col_m2:
+            render_host_trends_fragment(metrics['id'])
     else:
         st.warning("No metrics available in DB. Please refresh data.")
 
     st.subheader("Virtual Machines")
+    vm_placeholder = st.empty()
+    with vm_placeholder:
+        show_skeleton("table")
+        
     vms = fetch_vms_for_host(host_ip)
 
     if vms:
-        search_query = st.text_input("Search for a VM by name:", key=f"search_{host_ip}")
-        if search_query:
-            vms = [vm for vm in vms if search_query.lower() in vm["name"].lower()]
+        vm_placeholder.empty()
         
-        display_vms = []
+        # Data Preparation for the merged table
+        df_data = []
         for vm in vms:
-            state_raw = str(vm['power_state'])
-            if "poweredOn" in state_raw: state_display = "🟢 ↑"
-            elif "poweredOff" in state_raw: state_display = "🔴 ↓"
-            else: state_display = f"⚪ {state_raw}"
-
-            display_vms.append({
-                "Name": vm['name'], "OS": vm['os'], "IP": vm['ip'],
-                "CPU (vCPUs)": vm['cpu_count'], "RAM": vm['ram_info'],
-                "Disks": vm['disk_info'], "Created": vm['created_date'],
-                "State": state_display
+            state_raw = str(vm['power_state']).replace('powered', '')
+            df_data.append({
+                "Select": False,
+                "Name": vm['name'],
+                "State": f"{'🟢' if 'On' in state_raw else '🔴' if 'Off' in state_raw else '⚪'} {state_raw}",
+                "IP": vm['ip'],
+                "OS": vm['os'],
+                "vCPUs": vm['cpu_count'],
+                "RAM": vm['ram_info'],
+                "Storage": vm['disk_info']
             })
-        st.data_editor(display_vms, use_container_width=True, disabled=True)
-    else: st.info("No VMs found on this host in DB.")
+        
+        df = pd.DataFrame(df_data)
+        
+        # Search Filter
+        search_query = st.text_input("Search VMs...", key=f"search_{host_ip}")
+        if search_query:
+            df = df[df['Name'].str.contains(search_query, case=False)]
+
+        # Action Bar (Admin Only) - Appears above table
+        if st.session_state.get('role') == 'admin':
+            with st.container(border=True):
+                c1, c2, c3 = st.columns([3, 2, 5])
+                c1.markdown("**Batch Operations**")
+                action_choice = c2.selectbox(
+                    "Choose Action", 
+                    ["- Select -", "Power On", "Power Off", "Suspend", "Reset"],
+                    label_visibility="collapsed",
+                    key=f"action_select_{host_ip}"
+                )
+                
+                # The table is defined below, but we need to track selection
+                # We use session state to persist edits across the action button click
+                editor_key = f"vm_editor_{host_ip}"
+                
+                # Check if we have selections in the editor
+                has_selections = False
+                if editor_key in st.session_state and "edited_rows" in st.session_state[editor_key]:
+                    # edited_rows format: {row_idx: {"Select": True}}
+                    has_selections = any(
+                        val.get("Select") for val in st.session_state[editor_key]["edited_rows"].values()
+                    )
+
+                if action_choice != "- Select -":
+                    if c3.button(f"🚀 Execute {action_choice} on Selected", type="primary", width='stretch'):
+                        # Perform actions
+                        # 1. Get edited data
+                        edited_data = st.session_state[editor_key]["edited_rows"]
+                        selected_names = []
+                        for idx, changes in edited_data.items():
+                            if changes.get("Select"):
+                                selected_names.append(df.iloc[int(idx)]["Name"])
+                        
+                        if not selected_names:
+                            st.warning("No VMs selected. Click the checkboxes in the 'Select' column.")
+                        else:
+                            # Map action to collector action
+                            action_map = {"Power On": "on", "Power Off": "off", "Suspend": "suspend", "Reset": "reset"}
+                            cmd = action_map[action_choice]
+                            
+                            with st.spinner(f"Running {action_choice}..."):
+                                for vm_name in selected_names:
+                                    success, msg = data_collector.vm_power_action(host_ip, vm_name, cmd)
+                                    if success: st.toast(f"✅ {vm_name}: {msg}")
+                                    else: st.error(f"❌ {vm_name}: {msg}")
+                                
+                                # Immediate targeted refresh for real-time feel
+                                data_collector.update_single_host_by_ip(host_ip)
+                                st.cache_data.clear()
+                                st.rerun()
+
+        # Merged Actionable Table
+        st.data_editor(
+            df,
+            key=f"vm_editor_{host_ip}",
+            width='stretch',
+            hide_index=True,
+            disabled=["Name", "State", "IP", "OS", "vCPUs", "RAM", "Storage"], # Only 'Select' is editable
+            column_config={
+                "Select": st.column_config.CheckboxColumn("Select", help="Check to target for batch action", default=False),
+                "Name": st.column_config.TextColumn("VM Name", width="medium"),
+                "State": st.column_config.TextColumn("Status"),
+                "IP": st.column_config.TextColumn("IP Address"),
+                "RAM": st.column_config.TextColumn("RAM Allocation"),
+                "vCPUs": st.column_config.NumberColumn("vCPUs", format="%d")
+            }
+        )
+    else:
+        vm_placeholder.empty()
+        st.info("No VMs found on this host in DB.")
 
 def user_management(users_config, username):
     st.title("\u2699\ufe0f User Management")
@@ -676,11 +989,13 @@ def _load_users_config():
     with open('./users.json') as file:
         return json.load(file)
 
-@st.fragment(run_every="60s")
+@st.fragment(run_every="10s")
 def render_dashboard_grid(sort_by, sort_desc):
     all_hosts_with_metrics = fetch_hosts_with_metrics()
     
-    if sort_by != "Default":
+    if not all_hosts_with_metrics:
+        st.info("No hosts configured. Add them in the .env file.")
+        return
         def get_sort_key(h):
             metric_key = f"{sort_by.lower()}_usage"
             if sort_by == "Memory": metric_key = "mem_usage"
@@ -696,7 +1011,25 @@ def render_dashboard_grid(sort_by, sort_desc):
     for i, host_data in enumerate(all_hosts_with_metrics):
         with cols[i % num_columns]:
             with st.container(border=True):
-                st.subheader(f"🖥️ {host_data['ip']}")
+                # Live status indicator
+                last_s = host_data.get('last_synced')
+                if isinstance(last_s, str):
+                    try:
+                        last_s = datetime.fromisoformat(last_s.split('.')[0])
+                    except:
+                        last_s = None
+                
+                is_live = last_s and (datetime.now() - last_s).total_seconds() < 60
+                status_color = "#2e7d32" if is_live else "#757575"
+                status_text = "LIVE" if is_live else "SYNCING..."
+                
+                st.markdown(f"""
+                    <div style='display: flex; justify-content: space-between; align-items: center;'>
+                        <h3 style='margin:0;'>🖥️ {host_data['ip']}</h3>
+                        <span style='background: {status_color}; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; font-weight: bold;'>{status_text}</span>
+                    </div>
+                """, unsafe_allow_html=True)
+
                 if host_data['cpu_usage'] is None: st.warning("No data available.")
                 else:
                     metrics = host_data
@@ -764,7 +1097,7 @@ def main():
             st.rerun()
             
         st.divider()
-        if st.button("📊 Dashboard", use_container_width=True):
+        if st.button("📊 Dashboard", width='stretch'):
             st.session_state.page = 'dashboard'
             st.session_state.host = None
             st.session_state.found_vms = None
@@ -772,26 +1105,26 @@ def main():
             st.query_params["page"] = "dashboard"
             st.query_params["theme"] = st.session_state.theme
             st.rerun()
-        if st.button("🌐 IP Map", use_container_width=True):
+        if st.button("🌐 IP Map", width='stretch'):
             st.session_state.page = 'ip_management'
             st.query_params.clear()
             st.query_params["page"] = "ip_management"
             st.query_params["theme"] = st.session_state.theme
             st.rerun()
-        if st.button("🕒 Recently Created", use_container_width=True):
+        if st.button("🕒 Recently Created", width='stretch'):
             st.session_state.page = 'recent_vms'
             st.query_params.clear()
             st.query_params["page"] = "recent_vms"
             st.query_params["theme"] = st.session_state.theme
             st.rerun()
-        if st.button("🕰️ History / DR", use_container_width=True): # New Button
+        if st.button("🕰️ History / DR", width='stretch'): # New Button
             st.session_state.page = 'history'
             st.query_params.clear()
             st.query_params["page"] = "history"
             st.query_params["theme"] = st.session_state.theme
             st.rerun()
 
-        if st.button("🧠 AI Infrastructure Agent", use_container_width=True):
+        if st.button("🧠 AI Infrastructure Agent", width='stretch'):
             st.session_state.page = 'ai_agent'
             st.query_params.clear()
             st.query_params["page"] = "ai_agent"
@@ -816,7 +1149,7 @@ def main():
                 st.warning("Please provide a Gemini API Key in the sidebar.")
 
         if st.session_state.get('role') == 'admin':
-            if st.button("⚙️ User Management", use_container_width=True):
+            if st.button("⚙️ User Management", width='stretch'):
                 st.session_state.page = 'user_management'
                 st.query_params.clear()
                 st.query_params["page"] = "user_management"
@@ -855,10 +1188,6 @@ def main():
             st.caption("🔄 Collecting data...")
         elif _status["last_run"]:
             st.caption(f"Last update: {_status['last_run'].strftime('%H:%M:%S')}")
-
-        if st.button("🔄 Refresh Data", use_container_width=True):
-             st.cache_data.clear()
-             st.rerun()
 
     if st.session_state.page == 'user_management':
         user_management(users_config, username)

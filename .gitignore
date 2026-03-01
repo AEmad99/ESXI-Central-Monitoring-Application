@@ -16,21 +16,12 @@ __pycache__/
 venv/
 .env
 monitoring.db
+monitoring.db-shm
+monitoring.db-wal
+monitoring_backup.db
 users.json
 sessions.json
 scan_cache.json
-
-# Playwright
-node_modules/
-/test-results/
-/playwright-report/
-/blob-report/
-/playwright/.cache/
-/playwright/.auth/
-
-# Logos
-image.png
-m o n i t o r i n g _ b a c k u p . d b  
 
 # AI Models
 *.gguf

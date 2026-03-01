@@ -18,9 +18,10 @@ class ESXiHost(Base):
     username = Column(String, nullable=False)
     password = Column(String, nullable=False)
     group_name = Column(String, index=True)
+    last_synced = Column(DateTime, nullable=True) # To track live updates
     
     vms = relationship("VM", back_populates="esxi_host", cascade="all, delete-orphan")
-    host_metrics = relationship("HostMetrics", back_populates="esxi_host", cascade="all, delete-orphan")
+    host_metrics = relationship("HostMetrics", back_populates="esxi_host")
 
 class HostMetrics(Base):
     __tablename__ = 'host_metrics'
@@ -35,7 +36,7 @@ class HostMetrics(Base):
     storage_usage = Column(Float)
     used_storage_gb = Column(Float)
     total_storage_gb = Column(Float)
-    last_updated = Column(DateTime, default=datetime.now)
+    last_updated = Column(DateTime, default=datetime.now, index=True) # Added index for faster queries
     
     esxi_host = relationship("ESXiHost", back_populates="host_metrics")
 
@@ -46,6 +47,7 @@ class VM(Base):
     name = Column(String, nullable=False, index=True)
     os = Column(String)
     ip = Column(String, index=True)
+    type = Column(String, default="VM") # To distinguish from other types if needed
     cpu_count = Column(Integer)
     cpu_usage_mhz = Column(Integer)
     cpu_total_mhz = Column(Integer)

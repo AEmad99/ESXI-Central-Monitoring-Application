@@ -21,11 +21,21 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     # migrate existing tables to add new columns
     _migrate_vm_columns()
+    _migrate_host_columns()
     # ensure indexes exist
     _create_indexes()
 
+def _migrate_host_columns():
+    """Add last_synced column to esxi_hosts table if it doesn't exist."""
+    with engine.connect() as conn:
+        try:
+            with conn.begin():
+                conn.execute(text("ALTER TABLE esxi_hosts ADD COLUMN last_synced DATETIME"))
+        except Exception:
+            pass
+
 def _migrate_vm_columns():
-    """Add numeric resource columns to vms table if they don't exist."""
+    """Add numeric resource columns and type to vms table if they don't exist."""
     new_columns = [
         ("cpu_usage_mhz", "INTEGER"),
         ("cpu_total_mhz", "INTEGER"),
@@ -34,6 +44,7 @@ def _migrate_vm_columns():
         ("ram_total_mb", "INTEGER"),
         ("ram_usage", "REAL"),
         ("disk_total_gb", "REAL"),
+        ("type", "TEXT"),
     ]
     with engine.connect() as conn:
         for col_name, col_type in new_columns:

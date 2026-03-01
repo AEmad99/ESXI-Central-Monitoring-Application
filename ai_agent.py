@@ -111,7 +111,7 @@ def _get_gemini_model(system=None):
     if not api_key:
         raise ValueError("Gemini API Key not provided. Enter it in the sidebar.")
         
-    genai.configure(api_key=api_key)
+    genai.configure(api_key=api_key, transport='rest')
     return genai.GenerativeModel(
         model_name=GEMINI_MODEL,
         system_instruction=system
@@ -362,7 +362,7 @@ def handle_sql_query(user_input, chat_history):
         st.info("Query ran successfully but returned no results.")
         return "[Query returned no results]"
 
-    st.dataframe(result, use_container_width=True)
+    st.dataframe(result, width='stretch')
 
     # Stream a natural language summary for manageable result sets
     if len(result) <= 50:
@@ -526,7 +526,7 @@ def handle_infra_analysis(user_input):
 
                 resource_label = ', '.join(r.upper() for r in resources)
                 st.markdown(f"### Hosts with {resource_label} > {threshold}%")
-                st.dataframe(display_df, use_container_width=True, hide_index=True)
+                st.dataframe(display_df, width='stretch', hide_index=True)
                 shown_table = True
                 table_description = f"Showed table: {len(filtered)} hosts with {resource_label} > {threshold}%."
 
@@ -538,7 +538,7 @@ def handle_infra_analysis(user_input):
             display_df = overloaded[['ip', 'group_name', 'cpu_usage', 'mem_usage', 'storage_usage']].copy()
             display_df.columns = ['Host IP', 'Group', 'CPU %', 'Memory %', 'Storage %']
             st.markdown("### Overloaded Hosts")
-            st.dataframe(display_df, use_container_width=True, hide_index=True)
+            st.dataframe(display_df, width='stretch', hide_index=True)
             shown_table = True
             table_description = f"Showed table: {len(overloaded)} overloaded hosts."
 
@@ -550,7 +550,7 @@ def handle_infra_analysis(user_input):
             display_df = underutilized[['ip', 'group_name', 'cpu_usage', 'mem_usage', 'storage_usage']].copy()
             display_df.columns = ['Host IP', 'Group', 'CPU %', 'Memory %', 'Storage %']
             st.markdown("### Underutilized Hosts")
-            st.dataframe(display_df, use_container_width=True, hide_index=True)
+            st.dataframe(display_df, width='stretch', hide_index=True)
             shown_table = True
             table_description = f"Showed table: {len(underutilized)} underutilized hosts."
 
@@ -796,7 +796,7 @@ def handle_deploy_recommendation(user_input):
         st.markdown("**Current Host Availability:**")
         avail_df = pd.DataFrame(availability)[["ip", "group", "avail_mem_gb", "avail_storage_gb", "cpu_usage_pct", "mem_usage_pct"]]
         avail_df.columns = ["Host IP", "Group", "Avail RAM (GB)", "Avail Storage (GB)", "CPU %", "Mem %"]
-        st.dataframe(avail_df, use_container_width=True)
+        st.dataframe(avail_df, width='stretch')
         return "[No hosts with sufficient resources]"
 
     # Top recommendations
@@ -806,12 +806,12 @@ def handle_deploy_recommendation(user_input):
                                  "cpu_usage_pct", "mem_usage_pct", "max_vms_fit", "fitness_score"]]
     rec_df.columns = ["Host IP", "Group", "Avail RAM (GB)", "Avail Storage (GB)",
                       "CPU %", "Mem %", "Max VMs Fit", "Fitness Score"]
-    st.dataframe(rec_df, use_container_width=True)
+    st.dataframe(rec_df, width='stretch')
 
     # Distributed plan
     if distributed and reqs["count"] > 1:
         st.markdown("### Distributed Deployment Plan")
-        st.dataframe(pd.DataFrame(distributed), use_container_width=True)
+        st.dataframe(pd.DataFrame(distributed), width='stretch')
 
     # LLM summary
     top3_summary = json.dumps(top[:3], indent=2, default=str)
@@ -835,6 +835,56 @@ Write a brief, friendly recommendation (2-4 sentences). Mention the best host by
 # Main Render Function
 # =============================================================================
 
+def get_predictive_analysis():
+    """Extracts 30-day host trends and performs predictive capacity analysis via Gemini."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        # Fetch daily averages for the last 30 days
+        trend_query = """
+            SELECT 
+                e.ip,
+                date(m.last_updated) as day,
+                AVG(m.cpu_usage) as avg_cpu,
+                AVG(m.mem_usage) as avg_mem,
+                AVG(m.storage_usage) as avg_storage
+            FROM host_metrics m
+            JOIN esxi_hosts e ON m.host_id = e.id
+            WHERE m.last_updated >= date('now', '-30 days')
+            GROUP BY e.ip, day
+            ORDER BY day ASC
+        """
+        trends_df = pd.read_sql_query(trend_query, conn)
+        conn.close()
+
+        if trends_df.empty:
+            return "Insufficient historical data for predictive analysis. Please allow the background collector to run for a few days."
+
+        # Summarize trends for the prompt
+        trend_summary = trends_df.groupby('ip').agg({
+            'avg_cpu': ['mean', 'last'],
+            'avg_mem': ['mean', 'last'],
+            'avg_storage': ['mean', 'last']
+        }).to_string()
+
+        prompt = f"""You are an Infrastructure Architect. Perform a Predictive Capacity Analysis based on these 30-day ESXi host trends:
+        
+        TREND DATA (Daily Averages):
+        {trend_summary}
+        
+        TASK:
+        1. Calculate the 'Resource Runway' (estimated days until 100% exhaustion) for CPU, RAM, and Storage per host.
+        2. Identify specific bottlenecks.
+        3. Recommend VM placement optimization (e.g., 'Move high-RAM VMs from Host A to Host B').
+        4. Provide a 'Cluster Health Score' (0-100).
+        
+        Format your response in professional Markdown with a 'Resource Runway' table. Be precise and data-driven."""
+
+        model = _get_gemini_model(system="You are an expert Virtualization Architect specializing in VMware and capacity planning.")
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        return f"Error during predictive analysis: {str(e)}"
+
 def render_ai_agent():
     """Entry point called from monitoring_dashboard.py."""
     st.title("🧠 AI Infrastructure Agent")
@@ -842,11 +892,19 @@ def render_ai_agent():
 
     init_chat_history()
 
-    # Clear chat button in sidebar
+    # Clear chat and Predictive Analysis buttons in sidebar
     with st.sidebar:
-        if st.button("Clear Chat", key="clear_agent_chat"):
+        if st.button("Clear Chat", key="clear_agent_chat", width='stretch'):
             st.session_state.agent_chat_history = []
             st.rerun()
+            
+        st.divider()
+        st.subheader("Advanced Analysis")
+        if st.button("🚀 Run Predictive Capacity Analysis", width='stretch'):
+            with st.spinner("Analyzing 30-day trends..."):
+                report = get_predictive_analysis()
+                add_to_history("assistant", report)
+                st.rerun()
 
     render_chat_history()
 
