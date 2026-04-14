@@ -1,12 +1,19 @@
 from sqlalchemy import create_engine, text, event
 from sqlalchemy.orm import sessionmaker
-from models import Base, ESXiHost, Subnet, AppSettings
+from models import Base, ESXiHost, Subnet, AppSettings, VMDevice, VMSnapshot
 import os
 
 DB_FILE = 'monitoring.db'
 DATABASE_URL = f"sqlite:///{DB_FILE}"
 
-engine = create_engine(DATABASE_URL, echo=False, connect_args={"timeout": 30})
+engine = create_engine(
+    DATABASE_URL,
+    echo=False,
+    connect_args={"timeout": 30, "check_same_thread": False},
+    pool_size=10,
+    max_overflow=5,
+    pool_pre_ping=True,
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 @event.listens_for(engine, "connect")
@@ -19,11 +26,61 @@ def _set_sqlite_wal(dbapi_conn, connection_record):
 def init_db():
     # create tables
     Base.metadata.create_all(bind=engine)
-    # migrate existing tables to add new columns
+    # migrate existing tables to add new columns/tables
     _migrate_vm_columns()
     _migrate_host_columns()
+    _migrate_vm_devices_table()
+    _migrate_ip_lease_dns_hostname()
+    _migrate_vm_snapshots_table()
     # ensure indexes exist
     _create_indexes()
+
+def _migrate_vm_devices_table():
+    """Create vm_devices table if it doesn't exist (idempotent)."""
+    with engine.connect() as conn:
+        with conn.begin():
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS vm_devices (
+                    id INTEGER PRIMARY KEY,
+                    vm_id INTEGER NOT NULL REFERENCES vms(id) ON DELETE CASCADE,
+                    host_id INTEGER NOT NULL REFERENCES esxi_hosts(id) ON DELETE CASCADE,
+                    device_type VARCHAR,
+                    device_label VARCHAR,
+                    device_summary VARCHAR,
+                    connected BOOLEAN DEFAULT 0,
+                    last_updated DATETIME
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_vm_devices_vm_id ON vm_devices (vm_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_vm_devices_host_id ON vm_devices (host_id)"))
+
+def _migrate_ip_lease_dns_hostname():
+    """Add dns_hostname column to ip_leases table if it doesn't exist."""
+    with engine.connect() as conn:
+        try:
+            with conn.begin():
+                conn.execute(text("ALTER TABLE ip_leases ADD COLUMN dns_hostname VARCHAR"))
+        except Exception:
+            pass
+
+def _migrate_vm_snapshots_table():
+    """Create vm_snapshots table if it doesn't exist (idempotent)."""
+    with engine.connect() as conn:
+        with conn.begin():
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS vm_snapshots (
+                    id INTEGER PRIMARY KEY,
+                    timestamp DATETIME,
+                    vm_name VARCHAR NOT NULL,
+                    host_id INTEGER REFERENCES esxi_hosts(id),
+                    host_ip VARCHAR,
+                    power_state VARCHAR NOT NULL,
+                    ip_address VARCHAR,
+                    os VARCHAR
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_vm_snapshots_timestamp ON vm_snapshots (timestamp)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_vm_snapshots_vm_name ON vm_snapshots (vm_name)"))
 
 def _migrate_host_columns():
     """Add last_synced column to esxi_hosts table if it doesn't exist."""

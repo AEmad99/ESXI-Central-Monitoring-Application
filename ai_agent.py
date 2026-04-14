@@ -1,5 +1,4 @@
 import sqlite3
-import requests
 import json
 import re
 import os
@@ -14,8 +13,6 @@ from datetime import datetime
 
 DB_PATH = "monitoring.db"
 MAX_CHAT_HISTORY = 10
-
-# --- Gemini API ---
 GEMINI_MODEL = "gemini-2.5-flash"
 
 # =============================================================================
@@ -101,20 +98,17 @@ Keep responses brief, friendly, and helpful. Match response length to question c
 
 def _get_gemini_model(system=None):
     """Build Gemini model. Prioritizes session_state key, falls back to .env."""
-    # Check session state first (BYOK)
     api_key = st.session_state.get("gemini_api_key")
-    
-    # Fallback to .env
     if not api_key:
         api_key = os.getenv("GEMINI_API_KEY")
-        
+
     if not api_key:
         raise ValueError("Gemini API Key not provided. Enter it in the sidebar.")
-        
-    genai.configure(api_key=api_key, transport='rest')
+
+    genai.configure(api_key=api_key, transport="rest")
     return genai.GenerativeModel(
         model_name=GEMINI_MODEL,
-        system_instruction=system
+        system_instruction=system,
     )
 
 
@@ -879,7 +873,9 @@ def get_predictive_analysis():
         
         Format your response in professional Markdown with a 'Resource Runway' table. Be precise and data-driven."""
 
-        model = _get_gemini_model(system="You are an expert Virtualization Architect specializing in VMware and capacity planning.")
+        model = _get_gemini_model(
+            system="You are an expert Virtualization Architect specializing in VMware and capacity planning."
+        )
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:

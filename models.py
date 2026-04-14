@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Enum, create_engine
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Enum, Boolean, create_engine
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from datetime import datetime
 import enum
@@ -63,6 +63,21 @@ class VM(Base):
     last_updated = Column(DateTime, default=datetime.now)
 
     esxi_host = relationship("ESXiHost", back_populates="vms")
+    devices = relationship("VMDevice", back_populates="vm", cascade="all, delete-orphan")
+
+class VMDevice(Base):
+    """Tracks passthrough/USB devices attached to VMs (USB, PCI, SCSI)."""
+    __tablename__ = 'vm_devices'
+    id = Column(Integer, primary_key=True)
+    vm_id = Column(Integer, ForeignKey('vms.id', ondelete='CASCADE'), nullable=False, index=True)
+    host_id = Column(Integer, ForeignKey('esxi_hosts.id', ondelete='CASCADE'), nullable=False, index=True)
+    device_type = Column(String)    # 'USB', 'PCI Passthrough', 'SCSI Passthrough'
+    device_label = Column(String)   # e.g. "USB 1", "PCI device 0"
+    device_summary = Column(String) # e.g. device description from vSphere
+    connected = Column(Boolean, default=False)
+    last_updated = Column(DateTime, default=datetime.now)
+
+    vm = relationship("VM", back_populates="devices")
 
 class NetworkDevice(Base):
     """
@@ -89,8 +104,9 @@ class IPLease(Base):
     subnet = Column(String, nullable=False, index=True)
     status = Column(Enum(IPStatus), default=IPStatus.FREE)
     device_id = Column(Integer, ForeignKey('network_devices.id'), nullable=True)
+    dns_hostname = Column(String, nullable=True)  # Last resolved DNS hostname
     last_updated = Column(DateTime, default=datetime.now)
-    
+
     device = relationship("NetworkDevice", back_populates="ip_leases")
 
 class HistoryLog(Base):
@@ -115,3 +131,19 @@ class AppSettings(Base):
     __tablename__ = 'app_settings'
     key = Column(String, primary_key=True)
     value = Column(String, nullable=False)
+
+
+class VMSnapshot(Base):
+    """
+    Point-in-time snapshot of each VM's state, written every collection cycle.
+    Used by the History / DR page to show what was running at any given time.
+    """
+    __tablename__ = 'vm_snapshots'
+    id = Column(Integer, primary_key=True)
+    timestamp = Column(DateTime, default=datetime.now, index=True)
+    vm_name = Column(String, nullable=False, index=True)
+    host_id = Column(Integer, ForeignKey('esxi_hosts.id'), nullable=True)
+    host_ip = Column(String, nullable=True)
+    power_state = Column(String, nullable=False)
+    ip_address = Column(String, nullable=True)
+    os = Column(String, nullable=True)
